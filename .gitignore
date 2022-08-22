@@ -1,1 +1,13 @@
 old_code.ipynb
+time_test.py
+
+*.hdf5
+*.csv
+*.pdf
+*.jpg
+*.png
+*.swp
+
+__pycache__/
+data/
+.ipynb_checkpoints/

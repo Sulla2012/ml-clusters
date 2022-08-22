@@ -1,8 +1,47 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models, regularizers
+from tensorflow.keras import optimizers, layers, models, regularizers
+import keras_tuner as kt
+from tensorboard.plugins.hparams import api as tf_hp
 
+from tensorflow import keras
 
-def make_model(model_type = 'simple_cnn', input_shape = (342,342,5), degree = 5):
+def get_optimizer():
+    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+      0.001,
+      decay_steps=20000,
+      decay_rate=1,
+      staircase=False)
+    return tf.keras.optimizers.Adam(lr_schedule)
+
+def model_builder(hp):
+    model = models.Sequential()
+    l1_hp = hp.Int('l1_size', min_value = 3, max_value = 7, step =2)
+    model.add(layers.Conv2D(16, l1_hp, padding='same', activation='relu'))
+    model.add(layers.MaxPooling2D())
+    d1_hp = hp.Float('dropout1', min_value = 0, max_value = 0.5)
+    model.add(layers.Dropout(d1_hp))
+    l2_hp = hp.Int('l2_size', min_value = 3, max_value = 7, step =2) 
+    model.add(layers.Conv2D(32, l2_hp, padding='same', activation='relu'))
+    model.add(layers.MaxPooling2D())
+    l3_hp = hp.Int('l3_size', min_value = 3, max_value = 7, step =2)
+    model.add(layers.Conv2D(64, l3_hp, padding='same', activation='relu'))
+    model.add(layers.MaxPooling2D())
+    d2_hp = hp.Float('dropout2', min_value = 0, max_value = 0.5)
+    model.add(layers.Dropout(d2_hp))
+    model.add(layers.Flatten())
+    hp_units = hp.Int('dense_size', min_value=32, max_value=512, step=32)
+    model.add(layers.Dense(units=hp_units, activation='relu'))
+    model.add(layers.Dense(2))
+
+    hp_learning_rate = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=hp_learning_rate),
+      loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+      metrics=['accuracy'])
+
+    return model
+
+def make_model(model_type = 'simple_cnn', optimizer = None, kernel_regularizer = None, strategy = None, input_shape = (342,342,5), degree = 5):
 
     '''
     A function which creats a CNN model based off the TF model class from a number of different preset types
@@ -18,6 +57,10 @@ def make_model(model_type = 'simple_cnn', input_shape = (342,342,5), degree = 5)
     Outputs:
         model: A TF model class with features as specified by the model_type, with initialization performed
     '''
+
+    if strategy is None:
+        strategy = tf.distribute.MirroredStrategy()
+        print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
 
     if model_type == 'simple_cnn':
         model = models.Sequential()
@@ -71,19 +114,43 @@ def make_model(model_type = 'simple_cnn', input_shape = (342,342,5), degree = 5)
             return accuracy
 
     elif model_type == 'test':
+        with strategy.scope():
+            model = models.Sequential([
+            layers.Conv2D(16, 3, padding='same', activation='relu', kernel_regularizer= kernel_regularizer, input_shape=input_shape),
+            layers.MaxPooling2D(),
+            layers.Dropout(0.2),
+            layers.Conv2D(32, 3, padding='same', activation='relu', kernel_regularizer = kernel_regularizer),
+            layers.MaxPooling2D(),
+            layers.Conv2D(64, 3, padding='same', activation='relu', kernel_regularizer = kernel_regularizer),
+            layers.MaxPooling2D(),
+            layers.Dropout(0.2),
+            layers.Flatten(),
+            layers.Dense(512, activation='relu', kernel_regularizer = kernel_regularizer),
+            layers.Dense(2)])
+
+    elif model_type == 'test-no-dist':
         model = models.Sequential([
-        layers.Conv2D(16, 3, padding='same', activation='relu',
-               input_shape=input_shape),
+        layers.Conv2D(16, 3, padding='same', activation='relu', kernel_regularizer= kernel_regularizer, input_shape=input_shape),
         layers.MaxPooling2D(),
         layers.Dropout(0.2),
-        layers.Conv2D(32, 3, padding='same', activation='relu'),
+        layers.Conv2D(32, 3, padding='same', activation='relu', kernel_regularizer = kernel_regularizer),
         layers.MaxPooling2D(),
-        layers.Conv2D(64, 3, padding='same', activation='relu'),
+        layers.Conv2D(64, 3, padding='same', activation='relu', kernel_regularizer = kernel_regularizer),
         layers.MaxPooling2D(),
         layers.Dropout(0.2),
         layers.Flatten(),
-        layers.Dense(512, activation='relu'),
+        layers.Dense(512, activation='relu', kernel_regularizer = kernel_regularizer),
         layers.Dense(2)])
+
+
+    elif model_type == 'test_hyper': 
+        tuner = kt.BayesianOptimization(model_builder,
+                     max_trials = 100,
+                     objective='val_accuracy', 
+                     directory='/scratch/r/rbond/jorlo/ml-clusters/results',
+                     project_name='hyper_parameters')
+
+        return tuner
 
     elif model_type == 'deep_few_filters':
         model = models.Sequential()
@@ -140,7 +207,9 @@ def make_model(model_type = 'simple_cnn', input_shape = (342,342,5), degree = 5)
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['accuracy'])
     else:
-        model.compile(optimizer='Adam',
+        if optimizer is None:
+            optimizer = get_optimizer()
+        model.compile(optimizer=optimizer,
               loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
               metrics=['accuracy'])
     return model
