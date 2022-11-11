@@ -128,6 +128,26 @@ def make_model(model_type = 'simple_cnn', optimizer = None, kernel_regularizer =
             layers.Dense(512, activation='relu', kernel_regularizer = kernel_regularizer),
             layers.Dense(2)])
 
+    elif model_type == 'DeepShadows':
+        model = models.Sequential([
+            layers.Conv2D(filters=16, kernel_size=(3,3), padding='same', activation='relu',kernel_regularizer=regularizers.l2(0.13), input_shape = input_shape),
+            layers.BatchNormalization(),
+            layers.MaxPool2D(pool_size=(2, 2), strides=None, padding='valid'),
+            layers.Dropout(rate=0.4),
+            layers.Conv2D(filters=2*16, kernel_size=(3,3), padding='same', activation='relu',kernel_regularizer=regularizers.l2(0.13)),
+            layers.BatchNormalization(),
+            layers.MaxPool2D(pool_size=(2, 2), strides=None, padding='valid'),
+            layers.Dropout(rate=0.4),
+            layers.Conv2D(filters=2*32, kernel_size=(3,3), padding='same', activation='relu',kernel_regularizer=regularizers.l2(0.13)),
+            layers.BatchNormalization(),
+            layers.MaxPool2D(pool_size=(2, 2), strides=None, padding='valid'),
+            layers.Dropout(rate=0.4),
+            layers.Flatten(),
+            layers.Dense(units=1024, activation='relu',kernel_regularizer=regularizers.l2(0.12)),
+            layers.Dense(units=1, activation='sigmoid')])
+
+
+
     elif model_type == 'test-no-dist':
         model = models.Sequential([
         layers.Conv2D(16, 3, padding='same', activation='relu', kernel_regularizer= kernel_regularizer, input_shape=input_shape),
@@ -206,6 +226,11 @@ def make_model(model_type = 'simple_cnn', optimizer = None, kernel_regularizer =
         model.compile(optimizer=opt,
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['accuracy'])
+
+    elif model_type == 'DeepShadows':
+        model.compile(optimizer=optimizers.Adadelta(0.1),
+              loss= 'binary_crossentropy',
+              metrics=['accuracy'])
     else:
         if optimizer is None:
             optimizer = get_optimizer()
