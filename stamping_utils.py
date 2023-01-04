@@ -223,7 +223,7 @@ def make_jpg(path, box):
              degrees or radians, but if in degrees must have attached astropy units i.e. u.deg
     Output:
         to_return: array([px, py, 3]) an array of stamps in the three frequencies, all at location box. 
-        
+        cur_map.wcs: for performance reasons we just open and close the maps here, later functions require the wcs info so it gets returned as well
     '''
     
     #Just lists the frequencies of the ACT maps. Note the ACT convention of 090 for 90GHz
@@ -234,9 +234,9 @@ def make_jpg(path, box):
     for i, freq in enumerate(freqs):
         #For each frequeny, stamp out the box we're interested in. enmap.read_map reads in the map, reading only from inside
         #box, and returns a pixell map. [0] just selects only the data
-        cur_map = enmap.read_map(path + 'act_planck_daynight_f{}_map.fits'.format(freqs[i]), box=box)[0]
-        #print(cur_map)      
-        cur_map = normalize_map(cur_map)
+        cur_map = enmap.read_map(path + 'act_planck_daynight_f{}_map.fits'.format(freqs[i]), box=box)
+        if i == 2: cur_wcs = cur_map.wcs      
+        cur_map = normalize_map(cur_map[0])
         if type(cur_map) == int:
             return -1
         else:
@@ -245,7 +245,7 @@ def make_jpg(path, box):
     
     #Just some dimension rearanging 
     to_return = np.ascontiguousarray(to_return.transpose(1,2,0))
-    return to_return
+    return to_return, cur_wcs
 
 def normalize_map(imap):
     '''
@@ -355,3 +355,35 @@ def cutout(ras,decs, freq_map_090, freq_map_150, freq_map_220, scale = 10):
         to_return.append(temp)
     to_return = np.stack(to_return, axis=0)
     return to_return
+
+def make_mask(image, catalog, box, cur_wcs, size = 2.4):
+    #Function which makes masks corresponding to clusters in a image. 
+    mask = np.zeros(image[...,0].shape)
+
+    min_ra, max_ra, min_dec, max_dec = box[0][0], box[0][1], box[1][0], box[1][1] 
+
+    ras, decs = np.array(catalog[1].data['RADeg']), np.array(catalog[1].data['decDeg'])
+ 
+    in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
+  
+   
+    
+
+    for i in range(len(in_image)):
+        cur_cluster = in_image[i]
+        cur_center = SkyCoord(ras[cur_cluster], decs[cur_cluster], unit = "deg")
+        x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
+
+        pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
+
+        r = size/2/pix_size
+        
+        xx, yy = np.meshgrid(np.linspace(0, mask.shape[1]-1, mask.shape[1]), np.linspace(0, mask.shape[0]-1, mask.shape[0]))    
+        r_mask = (xx-x)**2 + (yy-y)**2 < r**2
+
+        mask += r_mask*i
+        #print(x,y)
+    
+    return(mask)
+
+
