@@ -373,7 +373,8 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4):
         cur_cluster = in_image[i]
         cur_center = SkyCoord(ras[cur_cluster], decs[cur_cluster], unit = "deg")
         x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
-
+        
+        #x,y = np.round(x), np.round(y)
         pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
 
         r = size/2/pix_size
