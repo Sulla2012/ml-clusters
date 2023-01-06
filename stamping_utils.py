@@ -365,16 +365,14 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4):
     ras, decs = np.array(catalog[1].data['RADeg']), np.array(catalog[1].data['decDeg'])
  
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
-  
-   
-    
-
+ 
     for i in range(len(in_image)):
         cur_cluster = in_image[i]
         cur_center = SkyCoord(ras[cur_cluster], decs[cur_cluster], unit = "deg")
         x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
         
-        #x,y = np.round(x), np.round(y)
+        x,y = np.round(x), np.round(y)
+        #print(x,y)
         pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
 
         r = size/2/pix_size
@@ -382,8 +380,10 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4):
         xx, yy = np.meshgrid(np.linspace(0, mask.shape[1]-1, mask.shape[1]), np.linspace(0, mask.shape[0]-1, mask.shape[0]))    
         r_mask = (xx-x)**2 + (yy-y)**2 < r**2
 
-        mask += r_mask*i
-        #print(x,y)
+        mask += r_mask*(i+1)
+        
+        doubled_mask = mask > i+1 #Un-double counts areas where clusters overlap
+        mask -= doubled_mask*(i+1)
     
     return(mask)
 
