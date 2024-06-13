@@ -363,8 +363,11 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4):
     min_ra, max_ra, min_dec, max_dec = box[0][0], box[0][1], box[1][0], box[1][1] 
 
     ras, decs = np.array(catalog[1].data['RADeg']), np.array(catalog[1].data['decDeg'])
- 
+   
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
+
+    if len(in_image) == 0:
+        return mask
  
     for i in range(len(in_image)):
         cur_cluster = in_image[i]
@@ -385,6 +388,20 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4):
         doubled_mask = mask > i+1 #Un-double counts areas where clusters overlap
         mask -= doubled_mask*(i+1)
     
-    return(mask)
+    return mask
 
+def make_mask_wise(image, loc, res, size = 2.4):
+    #Function which makes masks corresponding to clusters in a image. 
+    mask = np.zeros(image.shape)
+    
+    x,y = loc
+    x,y = np.round(x), np.round(y)
+
+    r = size/2/res
+
+    xx, yy = np.meshgrid(np.linspace(0, mask.shape[1]-1, mask.shape[1]), np.linspace(0, mask.shape[0]-1, mask.shape[0]))
+    r_mask = (xx-x)**2 + (yy-y)**2 < r**2
+
+    mask += r_mask
+    return(mask)
 
