@@ -227,15 +227,15 @@ def make_jpg(path, box):
     '''
     
     #Just lists the frequencies of the ACT maps. Note the ACT convention of 090 for 90GHz
-    freqs = ['090', '150', '220']
-    
+    #freqs = ['090', '150', '220']
+    freqs = ['090', '150'] #Not sure what's up here but there doesn't seem to be a f220 map
     to_return = []
     
     for i, freq in enumerate(freqs):
         #For each frequeny, stamp out the box we're interested in. enmap.read_map reads in the map, reading only from inside
         #box, and returns a pixell map. [0] just selects only the data
-        cur_map = enmap.read_map(path + 'act_planck_daynight_f{}_map.fits'.format(freqs[i]), box=box)
-        if i == 2: cur_wcs = cur_map.wcs      
+        cur_map = enmap.read_map(path + 'act_planck_s08_s22_f{}_daynight_map.fits'.format(freqs[i]), box=box)
+        if i == 1: cur_wcs = cur_map.wcs      
         cur_map = normalize_map(cur_map[0])
         if type(cur_map) == int:
             return -1
