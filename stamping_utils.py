@@ -31,6 +31,7 @@ from pixell.enmap import sky2pix
 
 from PIL import Image
 
+import glob
 
 def autotiler(surveyMask, wcs, targetTileWidth, targetTileHeight):
     """Given a survey mask (where values > 0 indicate valid area, and 0 indicates area to be ignored), 
@@ -212,6 +213,30 @@ def getTileCoordsDict(tileList,wcs_mask,tileOverlapDeg):
             clipCoordsDict[name]={'clippedSection': clip['clippedSection'], 'header': clip['wcs'].header,
                                   'areaMaskInClipSection': [clip_x0, clip_x1, clip_y0, clip_y1]}
     return clipCoordsDict
+
+
+def _make_jpg(path, box, freqs, normalize = True):
+    to_return = np.empty(len(freqs), dtype=object)
+    freqs = sorted(freqs)
+    files = glob.glob(path)
+    for i, freq in enumerate(freqs):
+        path = [path for path in files if freq in path]
+        if len(path) > 1:
+            raise PathError("Err: multiple paths match freq {}".format(freq))
+
+        cur_map = enmap.read_map(path[0], box = box)
+        wcs = cur_map.wcs
+        cur_map = cur_map[0] #select temperature channel
+        if normalize:
+            cur_map = normalize_map(cur_map)
+        if type(cur_map) == int: #error handling from normalize_map
+            return -1
+        to_return[i] = cur_map
+    to_return = np.stack(to_return, axis = 0)
+
+    to_return = np.ascontiguousarray(to_return.transpose(1,2,0))
+
+    return to_return, wcs
 
 def make_jpg(path, box):
     '''
