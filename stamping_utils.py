@@ -238,6 +238,41 @@ def _make_jpg(path, box, freqs, normalize = True):
 
     return to_return, wcs
 
+def make_stamp(path, box, freqs, normalize = True):
+    freqs = sorted(freqs)
+    files = glob.glob(path)
+
+    path = [path for path in files if freqs[0] in path]
+    if len(path) > 1:
+           raise PathError("Err: multiple paths match freq {}".format(freq))
+
+    base_map = enmap.read_map(path[0], box = box)
+    wcs = base_map.wcs
+    cur_map = base_map[0]
+    if normalize:
+        cur_map = normalize_map(cur_map)
+    
+    freq_maps = np.empty([len(freqs), cur_map.shape[0], cur_map.shape[1]]) #Gonna have to roll this in the loader
+    freq_maps[0] = cur_map
+
+    for i, freq in enumerate(freqs):
+        if i == 0: continue 
+        path = [path for path in files if freq in path]
+        if len(path) > 1:
+            raise PathError("Err: multiple paths match freq {}".format(freq))
+        
+        cur_map = enmap.read_map(path[0], box = box)
+        wcs = cur_map.wcs
+        cur_map = cur_map[0] #select temperature channel
+        if normalize:
+            cur_map = normalize_map(cur_map)
+        if type(cur_map) == int: #error handling from normalize_map
+            return -1
+        freq_maps[i] = cur_map
+ 
+    base_map[:] = freq_maps
+    return base_map, wcs
+
 def make_jpg(path, box):
     '''
     Function which makes a np array which can be interpreted as a jpg
@@ -381,9 +416,13 @@ def cutout(ras,decs, freq_map_090, freq_map_150, freq_map_220, scale = 10):
     to_return = np.stack(to_return, axis=0)
     return to_return
 
-def make_mask(image, catalog, box, cur_wcs, size = 2.4):
+def make_mask(image, catalog, box, cur_wcs, size = 2.4, jpg=False):
     #Function which makes masks corresponding to clusters in a image. 
-    mask = np.zeros(image[...,0].shape)
+    if jpg: 
+        mask = np.zeros(image[...,0].shape)
+
+    else:
+        mask = np.zeros(image[0].shape)
 
     min_ra, max_ra, min_dec, max_dec = box[0][0], box[0][1], box[1][0], box[1][1] 
 
