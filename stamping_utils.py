@@ -248,13 +248,14 @@ def make_stamp(path, box, freqs, normalize = True):
 
     base_map = enmap.read_map(path[0], box = box)
     wcs = base_map.wcs
-    if "websky" in path:
+
+    if "websky" in path[0]:
         cur_map = base_map
     else:
         cur_map = base_map[0]
     if normalize:
         cur_map = normalize_map(cur_map)
-    
+
     freq_maps = np.empty([len(freqs), cur_map.shape[0], cur_map.shape[1]]) #Gonna have to roll this in the loader
     freq_maps[0] = cur_map
 
@@ -272,9 +273,9 @@ def make_stamp(path, box, freqs, normalize = True):
         if type(cur_map) == int: #error handling from normalize_map
             return -1
         freq_maps[i] = cur_map
- 
-    base_map[:] = freq_maps
-    return base_map, wcs
+    to_ret = enmap.enmap(freq_maps, wcs=base_map.wcs) 
+
+    return to_ret, wcs
 
 def make_jpg(path, box):
     '''
