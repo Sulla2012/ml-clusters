@@ -248,7 +248,10 @@ def make_stamp(path, box, freqs, normalize = True):
 
     base_map = enmap.read_map(path[0], box = box)
     wcs = base_map.wcs
-    cur_map = base_map[0]
+    if "websky" in path:
+        cur_map = base_map
+    else:
+        cur_map = base_map[0]
     if normalize:
         cur_map = normalize_map(cur_map)
     
