@@ -427,8 +427,8 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
 
     else:
         mask = np.zeros(image[0].shape)
-
-    min_ra, max_ra, min_dec, max_dec = box[0][0], box[0][1], box[1][0], box[1][1] 
+    box /= utils.degree
+    min_ra, max_ra, min_dec, max_dec = box[0][1], box[1][1], box[0][0], box[1][0] 
    
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
 
@@ -441,7 +441,7 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
         x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
         
         x,y = np.round(x), np.round(y)
-        print(x,y)
+
         pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
 
         r = size/2/pix_size
