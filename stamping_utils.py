@@ -420,7 +420,7 @@ def cutout(ras,decs, freq_map_090, freq_map_150, freq_map_220, scale = 10):
     to_return = np.stack(to_return, axis=0)
     return to_return
 
-def make_mask(image, catalog, box, cur_wcs, size = 2.4, jpg=False):
+def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
     #Function which makes masks corresponding to clusters in a image. 
     if jpg: 
         mask = np.zeros(image[...,0].shape)
@@ -429,8 +429,6 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4, jpg=False):
         mask = np.zeros(image[0].shape)
 
     min_ra, max_ra, min_dec, max_dec = box[0][0], box[0][1], box[1][0], box[1][1] 
-
-    ras, decs = np.array(catalog[1].data['RADeg']), np.array(catalog[1].data['decDeg'])
    
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
 
@@ -443,7 +441,7 @@ def make_mask(image, catalog, box, cur_wcs, size = 2.4, jpg=False):
         x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
         
         x,y = np.round(x), np.round(y)
-        #print(x,y)
+        print(x,y)
         pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
 
         r = size/2/pix_size
