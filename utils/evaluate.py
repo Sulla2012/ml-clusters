@@ -39,7 +39,7 @@ def reduce_cat(cents):
     return unique_cents
 
 
-def make_cat(model, dataset_test, img_path, thresh=0.5):
+def make_cat(model, dataset_test, img_path, device, thresh=0.5):
     model.eval()
     cents = []
     for i in range(len(dataset_test)):
