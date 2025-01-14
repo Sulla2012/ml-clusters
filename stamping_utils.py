@@ -238,7 +238,7 @@ def _make_jpg(path, box, freqs, normalize = True):
 
     return to_return, wcs
 
-def make_stamp(path, box, freqs, normalize = True):
+def make_stamp(path, box, freqs, normalize = True, reproj = True):
     freqs = sorted(freqs)
     files = glob.glob(path)
 
@@ -246,16 +246,23 @@ def make_stamp(path, box, freqs, normalize = True):
     if len(path) > 1:
            raise PathError("Err: multiple paths match freq {}".format(freq))
 
-    base_map = enmap.read_map(path[0], box = box)
-    wcs = base_map.wcs
+    ra = np.mean(box[:,1]) 
+    dec = np.mean(box[:,0])
 
-    if "websky" in path[0]:
-        cur_map = base_map
-    else:
-        cur_map = base_map[0]
+    r = np.abs(box[1][1] - ra)
+
+    cur_map = enmap.read_map(path[0], box = box)
+    cur_wcs = cur_map.wcs   
+    
+    if reproj:
+        cur_map = reproject.thumbnails(cur_map, [[dec, ra]], proj="tan", r=r, res = np.abs(cur_map.wcs.wcs.cdelt[0]) * utils.degree)
+        print(cur_map.wcs)    
+    if len(cur_map.shape) > 2:
+        cur_map = cur_map[0]
+
     if normalize:
         cur_map = normalize_map(cur_map)
-
+    
     freq_maps = np.empty([len(freqs), cur_map.shape[0], cur_map.shape[1]]) #Gonna have to roll this in the loader
     freq_maps[0] = cur_map
 
@@ -266,16 +273,28 @@ def make_stamp(path, box, freqs, normalize = True):
             raise PathError("Err: multiple paths match freq {}".format(freq))
         
         cur_map = enmap.read_map(path[0], box = box)
-        wcs = cur_map.wcs
-        cur_map = cur_map[0] #select temperature channel
+        if reproj:
+            cur_map = reproject.thumbnails(cur_map, [[dec, ra]], r=r, res = np.abs(cur_map.wcs.wcs.cdelt[0]) * utils.degree)
+
+        if len(cur_map.shape)>2:
+            cur_map = cur_map[0]
+
         if normalize:
             cur_map = normalize_map(cur_map)
         if type(cur_map) == int: #error handling from normalize_map
             return -1
         freq_maps[i] = cur_map
-    to_ret = enmap.enmap(freq_maps, wcs=base_map.wcs) 
+    """
+    if reproj: 
+        x0 = wcs.utils.pixel_to_skycoord(0, 0, cur_wcs) 
+        print(r/(2*cur_wcs.wcs.cdelt[0]*utils.degree))
+        cur_wcs.wcs.crpix[1] -= r/(2*cur_wcs.wcs.cdelt[0]*utils.degree)
+        cur_wcs.wcs.crpix[0] -= r/(2*cur_wcs.wcs.cdelt[0]*utils.degree) 
+    """
 
-    return to_ret, wcs
+    to_ret = enmap.enmap(freq_maps, wcs=cur_wcs)
+
+    return to_ret, cur_wcs
 
 def make_jpg(path, box):
     '''
@@ -429,7 +448,7 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
         mask = np.zeros(image[0].shape)
     box /= utils.degree
     min_ra, max_ra, min_dec, max_dec = box[0][1], box[1][1], box[0][0], box[1][0] 
-   
+
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
 
     if len(in_image) == 0:
@@ -439,9 +458,7 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
         cur_cluster = in_image[i]
         cur_center = SkyCoord(ras[cur_cluster], decs[cur_cluster], unit = "deg")
         x,y = wcs.utils.skycoord_to_pixel(cur_center, cur_wcs)
-        
         x,y = np.round(x), np.round(y)
-
         pix_size = wcs.utils.proj_plane_pixel_scales(cur_wcs)[0] * 60
 
         r = size/2/pix_size
