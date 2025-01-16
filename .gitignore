@@ -12,3 +12,13 @@ time_test.py
 __pycache__/
 data/
 .ipynb_checkpoints/
+output/
+__MACOSX/
+baloons/
+
+jupyter-cleaner.py
+
+garbage/
+other-projects/
+
+figs/
