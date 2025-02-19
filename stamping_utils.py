@@ -215,30 +215,30 @@ def getTileCoordsDict(tileList,wcs_mask,tileOverlapDeg):
     return clipCoordsDict
 
 
-def _make_jpg(path, box, freqs, normalize = True):
-    to_return = np.empty(len(freqs), dtype=object)
-    freqs = sorted(freqs)
-    files = glob.glob(path)
-    for i, freq in enumerate(freqs):
-        path = [path for path in files if freq in path]
-        if len(path) > 1:
-            raise PathError("Err: multiple paths match freq {}".format(freq))
-
-        cur_map = enmap.read_map(path[0], box = box)
-        wcs = cur_map.wcs
-        cur_map = cur_map[0] #select temperature channel
-        if normalize:
-            cur_map = normalize_map(cur_map)
-        if type(cur_map) == int: #error handling from normalize_map
-            return -1
-        to_return[i] = cur_map
-    to_return = np.stack(to_return, axis = 0)
-
-    to_return = np.ascontiguousarray(to_return.transpose(1,2,0))
-
-    return to_return, wcs
-
 def make_stamp(path, box, freqs, normalize = True, reproj = True):
+    """
+    Function which makes a stamp of a map.
+
+    Parameters
+    ----------
+    path : str
+        Path to the map to be stamped.
+    box : np.array(np.floating)
+        Box that defines the stamp. Standard [[dec_min, ra_min],[dec_max, ra_max]]
+    freqs : list[str]
+        List of strings which specify which frequencies to use.
+    normalized : bool, default = True
+        If true, normalize, then the map is normalized to have mean=0, std=1
+    reproj : bool, default = True
+        If true, reproject the map into the local tangent plane.
+
+    Returns
+    -------
+    to_ret : enmap.enmap
+        Enmap of the stamp
+    cur_wcs : wcs.wcs
+        WCS of the stamp
+    """
     freqs = sorted(freqs)
     files = glob.glob(path)
 
@@ -284,51 +284,10 @@ def make_stamp(path, box, freqs, normalize = True, reproj = True):
         if type(cur_map) == int: #error handling from normalize_map
             return -1
         freq_maps[i] = cur_map
-    """
-    if reproj: 
-        x0 = wcs.utils.pixel_to_skycoord(0, 0, cur_wcs) 
-        print(r/(2*cur_wcs.wcs.cdelt[0]*utils.degree))
-        cur_wcs.wcs.crpix[1] -= r/(2*cur_wcs.wcs.cdelt[0]*utils.degree)
-        cur_wcs.wcs.crpix[0] -= r/(2*cur_wcs.wcs.cdelt[0]*utils.degree) 
-    """
 
     to_ret = enmap.enmap(freq_maps, wcs=cur_wcs)
 
     return to_ret, cur_wcs
-
-def make_jpg(path, box):
-    '''
-    Function which makes a np array which can be interpreted as a jpg
-    
-    Input: 
-        path: str, path to where the maps we're making these jpgs from lives
-        box: array([[ra_min, dec_min],[ra_max, dec_max]]) the box defining the edges of the jpg. Can be in either
-             degrees or radians, but if in degrees must have attached astropy units i.e. u.deg
-    Output:
-        to_return: array([px, py, 3]) an array of stamps in the three frequencies, all at location box. 
-        cur_map.wcs: for performance reasons we just open and close the maps here, later functions require the wcs info so it gets returned as well
-    '''
-    
-    #Just lists the frequencies of the ACT maps. Note the ACT convention of 090 for 90GHz
-    #freqs = ['090', '150', '220']
-    freqs = ['090', '150'] #Not sure what's up here but there doesn't seem to be a f220 map
-    to_return = []
-    
-    for i, freq in enumerate(freqs):
-        #For each frequeny, stamp out the box we're interested in. enmap.read_map reads in the map, reading only from inside
-        #box, and returns a pixell map. [0] just selects only the data
-        cur_map = enmap.read_map(path + 'act_planck_s08_s22_f{}_daynight_map.fits'.format(freqs[i]), box=box)
-        if i == 1: cur_wcs = cur_map.wcs      
-        cur_map = normalize_map(cur_map[0])
-        if type(cur_map) == int:
-            return -1
-        else:
-            to_return.append(cur_map)
-    to_return = np.stack(to_return, axis=0)
-    
-    #Just some dimension rearanging 
-    to_return = np.ascontiguousarray(to_return.transpose(1,2,0))
-    return to_return, cur_wcs
 
 def normalize_map(imap):
     '''
@@ -336,10 +295,15 @@ def normalize_map(imap):
     subtracts off the mean and divides by the std, returning a map with 0 mean and 1 std. We want to consider other
     methods for normalizing. Each frequency is normalized independantly (may want to reconsider this)
     
-    Input:
-        imap: array, the input map as an np array
-    Ouptut:
-        temp_map: array(imap.shap), the normalized input map
+    Parameters
+    ----------   
+    imap : np.array
+        the input map as an np array
+
+    Ouptut
+    ------
+    temp_map : np.array
+        The normalized input map
     
     '''
     temp_map = np.zeros(imap.shape)
@@ -354,90 +318,6 @@ def normalize_map(imap):
 
     return temp_map
 
-
-def freq_cutout(ra, dec, freq_map, scale=399, width = 3.5*utils.arcmin):
-
-    #A function for upscaling act maps, can ignore
-    stamp = freq_stamp(ra, dec, freq_map, width = width)
-    
-    highres = block_replicate(stamp, scale)
-    if stamp is None: return None
-    mymin,mymax = 0,stamp.shape[1]-1
-    X = np.linspace(mymin,mymax,stamp.shape[1])
-    Y = np.linspace(mymin,mymax,stamp.shape[1])
-
-    x,y = np.meshgrid(X,Y)
-
-    f = interpolate.interp2d(x,y,stamp[0],kind='linear')
-
-    Xnew, Ynew = np.linspace(0, stamp.shape[1], scale), np.linspace(0, stamp.shape[1], scale)
-
-    #print(Xnew)
-
-    highres = f(Xnew, Ynew)
-    return highres
-
-def freq_stamp(ra, dec, freq_map, width = 3.5*utils.arcmin):
-    ra, dec = ra*u.deg, dec*u.deg
-    stamp = reproject.thumbnails(freq_map, ( dec.to(u.radian).value,ra.to(u.radian).value), r=width)
-    
-    return stamp
-
-def cutout(ras,decs, freq_map_090, freq_map_150, freq_map_220, scale = 10):
-
-    #Makes combined ACT+DES images, can ignore
-
-    names = os.listdir('/project/r/rbond/jorlo/datasets/DESTileImages/')
-    to_return = []
-    for i in range(len(ras)):
-        print(i, end = '\r')
-        temp = np.zeros((380,380,8))
-        ra, dec= ras[i], decs[i]
-
-        tileName=tiler.getTileName(ra, dec)
-        if tileName == None: continue
-        for name in names:
-            if tileName in name:
-                fileName = name[:21]
-                break
-        bands = ['g', 'r', 'i', 'z', 'Y']
-        for j, band in enumerate(bands):
-            print('J: ', j)
-            hi_data = fits.open('/project/r/rbond/jorlo/datasets/DESTileImages/{}_{}.fits.fz'.format(fileName,band))
-            header = hi_data[1].header
-            w = wcs.WCS(header)
-            hdata = hi_data[1].data
-            c = SkyCoord(ra=ra*u.deg, dec=dec*u.deg)
-            px, py = wcs.utils.skycoord_to_pixel(c, w)
-            size = u.Quantity([scale, scale], u.arcmin)
-            print(size)
-            cutout = Cutout2D(hdata, (px,py), size,  wcs = w).data
-            print(cutout.shape)
-            if cutout.shape != (2281, 2281): continue
-            temp[...,j] = block_reduce(cutout, 6, func = np.mean)
-            
-
-        freqs = ['090', '150', '220']
-        
-        for i, freq in enumerate(freqs):
-            if freqs[i] == '090': freq_cut = freq_cutout(ra, dec, freq_map_090, scale = 380, width = scale/2*utils.arcmin)
-            elif freqs[i] == '150': freq_cut = freq_cutout(ra, dec, freq_map_150, scale = 380, width = scale/2*utils.arcmin)
-            elif freqs[i] == '220': freq_cut = freq_cutout(ra, dec, freq_map_220, scale = 380, width = scale/2*utils.arcmin)
-            if freq_cut is None: continue
-            temp[...,5+i] = freq_cut
-        temp = normalize_map(temp)
-        """
-        if np.all(to_return) == 1:
-            to_return = temp
-        elif len(to_return.shape) == 3:
-            print('here')
-            to_return = np.stack((to_return, temp), axis = -1)
-        else:
-            to_return = np.append(to_return, temp, axis = -1)
-        """
-        to_return.append(temp)
-    to_return = np.stack(to_return, axis=0)
-    return to_return
 
 def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
     #Function which makes masks corresponding to clusters in a image. 
@@ -472,19 +352,4 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
         mask -= doubled_mask*(i+1)
     
     return mask
-
-def make_mask_wise(image, loc, res, size = 2.4):
-    #Function which makes masks corresponding to clusters in a image. 
-    mask = np.zeros(image.shape)
-    
-    x,y = loc
-    x,y = np.round(x), np.round(y)
-
-    r = size/2/res
-
-    xx, yy = np.meshgrid(np.linspace(0, mask.shape[1]-1, mask.shape[1]), np.linspace(0, mask.shape[0]-1, mask.shape[0]))
-    r_mask = (xx-x)**2 + (yy-y)**2 < r**2
-
-    mask += r_mask
-    return(mask)
 
