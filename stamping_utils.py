@@ -250,7 +250,6 @@ def make_stamp(fpath, box, freqs, normalize = True, reproj = True):
     dec = np.mean(box[:,0])
 
     r = np.abs(box[1][1] - ra)
-    print(box)
     cur_map = enmap.read_map(cur_path[0], box = box)
       
     
