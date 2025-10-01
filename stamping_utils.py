@@ -326,9 +326,12 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
 
     else:
         mask = np.zeros(image[0].shape)
-    box /= utils.degree
     min_ra, max_ra, min_dec, max_dec = box[0][1], box[1][1], box[0][0], box[1][0] 
-
+    min_ra /= utils.degree
+    max_ra /= utils.degree
+    min_dec /= utils.degree
+    max_dec /= utils.degree
+    
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
 
     if len(in_image) == 0:
