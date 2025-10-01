@@ -215,7 +215,7 @@ def getTileCoordsDict(tileList,wcs_mask,tileOverlapDeg):
     return clipCoordsDict
 
 
-def make_stamp(path, box, freqs, normalize = True, reproj = True):
+def make_stamp(fpath, box, freqs, normalize = True, reproj = True):
     """
     Function which makes a stamp of a map.
 
@@ -240,26 +240,27 @@ def make_stamp(path, box, freqs, normalize = True, reproj = True):
         WCS of the stamp
     """
     freqs = sorted(freqs)
-    files = glob.glob(path)
+    files = glob.glob(fpath)
 
-    path = [path for path in files if freqs[0] in path]
-    if len(path) > 1:
+    cur_path = [path for path in files if freqs[0] in path]
+    if len(cur_path) > 1:
            raise PathError("Err: multiple paths match freq {}".format(freq))
 
     ra = np.mean(box[:,1]) 
     dec = np.mean(box[:,0])
 
     r = np.abs(box[1][1] - ra)
-
-    cur_map = enmap.read_map(path[0], box = box)
-    cur_wcs = cur_map.wcs   
+    cur_map = enmap.read_map(cur_path[0], box = box)
+      
     
     if reproj:
         cur_map = reproject.thumbnails(cur_map, [[dec, ra]], proj="tan", r=r, res = np.abs(cur_map.wcs.wcs.cdelt[0]) * utils.degree)
-        print(cur_map.wcs)    
+        cur_wcs = cur_map.wcs    
+        cur_wcs.wcs.crval = [ra/utils.degree,dec/utils.degree]
     if len(cur_map.shape) > 2:
         cur_map = cur_map[0]
-
+        cur_wcs = cur_map.wcs
+    
     if normalize:
         cur_map = normalize_map(cur_map)
     
@@ -326,9 +327,12 @@ def make_mask(image, ras, decs, box, cur_wcs, size = 2.4, jpg=False):
 
     else:
         mask = np.zeros(image[0].shape)
-    box /= utils.degree
     min_ra, max_ra, min_dec, max_dec = box[0][1], box[1][1], box[0][0], box[1][0] 
-
+    min_ra /= utils.degree
+    max_ra /= utils.degree
+    min_dec /= utils.degree
+    max_dec /= utils.degree
+    
     in_image = np.where((min_ra < ras) & (ras < max_ra) & (min_dec < decs) & (decs < max_dec))[0]
 
     if len(in_image) == 0:
