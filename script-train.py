@@ -89,7 +89,6 @@ def main():
     test_num = args.test_num
     dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
     dataset_test = torch.utils.data.Subset(dataset_test, indices[-test_num:])
-    print("HERE 1")
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
         dataset,
@@ -111,7 +110,6 @@ def main():
 
     # our dataset has two classes only - background and person
     num_classes = 2
-    print("HERE 2")
     backbone = args.backbone
     backbone_path = args.backbone_path
     # get the model using our helper function
@@ -134,7 +132,6 @@ def main():
     # 10x every 3 epochs
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     num_epochs = args.num_epochs
-    print("HERE 3")
     model_path = "/mnt/welch/USERS/jorlo/ml-clusters/models/torch-act/act-{}-frcnn-{}-tiles.pth".format(
         backbone, args.tile_type
     )  # TODO: fix this path
