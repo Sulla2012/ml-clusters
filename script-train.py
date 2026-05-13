@@ -20,6 +20,11 @@ def _make_parser() -> argp.ArgumentParser:
     )
     parser.add_argument("root", help="Path to the dataset of images")
     parser.add_argument(
+        "backbone_path",
+        type=str,
+        help="Path to backbone save location",
+    )  # TODO: maybe this should be required
+    parser.add_argument(
         "--tile_type",
         "-tt",
         type=str,
@@ -48,18 +53,25 @@ def _make_parser() -> argp.ArgumentParser:
         help="Backbone class to use.",
     )
     parser.add_argument(
-        "--backbone_path",
-        "-bp",
-        type=str,
-        default="/mnt/welch/USERS/jorlo/ml-clusters/models/torch-act/",
-        help="Path to backbone save location",
-    )  # TODO: maybe this should be required
-    parser.add_argument(
         "--num_epochs",
         "-ne",
         type=int,
         default=10,
         help="Number of epochs to train for.",
+    )
+    parser.add_argument(
+            "--img_src",
+            "-is",
+            type=str,
+            default="act",
+            help="Source of images",
+    )
+    parser.add_argument(
+        "--train_num",
+        "-trn",
+        type=int,
+        default=None,
+        help="Number of training samples to use. If unset, use all (less test)"
     )
     return parser
 
@@ -87,7 +99,10 @@ def main():
     indices = torch.randperm(len(dataset)).tolist()
 
     test_num = args.test_num
-    dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
+    if args.train_num is not None:
+        dataset = torch.utils.data.Subset(dataset, indices[:args.train_num])
+    else:
+        dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
     dataset_test = torch.utils.data.Subset(dataset_test, indices[-test_num:])
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
@@ -107,17 +122,20 @@ def main():
     )
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print(f"Using {device} device")
 
     # our dataset has two classes only - background and person
     num_classes = 2
     backbone = args.backbone
     backbone_path = args.backbone_path
+    img_src = args.img_src
     # get the model using our helper function
     model = get_instance_frcnn_model(
         num_classes,
-        backbone_path=backbone_path + "act-{}.pth".format(backbone),
+        backbone_path=backbone_path + "{}-{}.pth".format(img_src, backbone),
         backbone_type=backbone,
-    )
+        ) #TODO: source for the backbone doesnt have to be the same as the source for the images
+          #i.e. you can train a backbone on images from one source and then apply it to another source
 
     # move model to the right device
     model.to(device)
@@ -132,8 +150,8 @@ def main():
     # 10x every 3 epochs
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     num_epochs = args.num_epochs
-    model_path = "/mnt/welch/USERS/jorlo/ml-clusters/models/torch-act/act-{}-frcnn-{}-tiles.pth".format(
-        backbone, args.tile_type
+    model_path = "/mnt/welch/USERS/jorlo/ml-clusters/models/torch-{}/{}-{}-frcnn-{}-tiles.pth".format(
+        img_src, img_src, backbone, args.tile_type
     )  # TODO: fix this path
     load_exiting_weights = True
     if load_exiting_weights and os.path.exists(model_path):

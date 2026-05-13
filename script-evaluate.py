@@ -9,6 +9,7 @@ from utils.nn import (
 
 from utils.evaluate import make_cat, reduce_cat, make_cat_truth, get_real_clusters
 
+import numpy as np
 
 import argparse as argp
 
@@ -19,11 +20,22 @@ def _make_parser() -> argp.ArgumentParser:
     )
     parser.add_argument("root", help="Path to the dataset of images")
     parser.add_argument(
+        "backbone_path",
+        help="Path to backbone save location",
+    )  # TODO: maybe this should be required
+    parser.add_argument(
         "--tile_type",
         "-tt",
         type=str,
         default="indv",
         help="What type of images to train on.",
+    )
+    parser.add_argument(
+            "--img_src",
+            "-is",
+            type=str,
+            default="act",
+            help="Source of images",
     )
     parser.add_argument(
         "--seed",
@@ -46,36 +58,22 @@ def _make_parser() -> argp.ArgumentParser:
         default="mobilenet",
         help="Backbone class to use.",
     )
-    parser.add_argument(
-        "--backbone_path",
-        "-bp",
-        type=str,
-        default="/mnt/welch/USERS/jorlo/ml-clusters/models/torch-act/",
-        help="Path to backbone save location",
-    )  # TODO: maybe this should be required
-    parser.add_argument(
-        "--num_epochs",
-        "-ne",
-        type=int,
-        default=10,
-        help="Number of epochs to train for.",
-    )
     return parser
 
 
 # def main():
 parser = _make_parser()
 args = parser.parse_args()
-
-model_path = args.backbone_path + "/act-{}-frcnn-{}-tiles.pth".format(
-    args.backbone, args.tile_type
+img_src = args.img_src
+model_path = args.backbone_path + "/{}-{}-frcnn-{}-tiles.pth".format(
+    img_src,args.backbone, args.tile_type
 )
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 num_classes = 2
 backbone = args.backbone
 model = get_instance_frcnn_model(
     num_classes,
-    backbone_path=args.backbone_path + "act-{}.pth".format(backbone),
+    backbone_path=args.backbone_path + "{}-{}.pth".format(img_src, backbone),
     backbone_type=backbone,
 )
 model.to(device=device)
@@ -95,7 +93,6 @@ dataset_test = ClusterDataset(
     cluster_dir="{}_freq_stamps".format(args.tile_type),
     mask_dir="{}_freq_masks".format(args.tile_type),
 )
-
 # split the dataset in train and test set
 # TODO: currently this relies on the seed being set the same for the training and
 # evaluation which is really sketchy. I should probably just save the traingin
@@ -104,8 +101,13 @@ torch.manual_seed(args.seed)
 indices = torch.randperm(len(dataset)).tolist()
 
 test_num = args.test_num
+imgs = np.array(dataset_test.imgs)[indices[:-test_num]]
+imgs_test = np.array(dataset_test.imgs)[indices[-test_num:]]
 dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
 dataset_test = torch.utils.data.Subset(dataset_test, indices[-test_num:])
+
+dataset_test.imgs = imgs_test
+dataset.imgs = imgs
 
 img_path = (
     args.root + "/indv_freq_stamps/{:04}.fits"

@@ -46,8 +46,9 @@ def make_cat(model, dataset_test, img_path, device, thresh=0.5):
     cents = []
     for i in range(len(dataset_test)):
         pixel_cents = []
-        img, truth = dataset_test[i]
-        wcs_img = fits.open(img_path.format(truth["image_id"][0]))
+        img, _ = dataset_test[i]
+        idx = dataset_test.imgs[i].split(".")[0]
+        wcs_img = fits.open(img_path.format(idx))
         w = wcs.WCS(wcs_img[0].header).dropaxis(
             2
         )  # wcs generates a dummy axis corresponding to frequency.
@@ -86,7 +87,8 @@ def make_cat_truth(dataset: Subset, img_path: str) -> np.array:
         # TODO: This should be functionized
         pixel_cents = []
         _, truth = dataset[i]
-        wcs_img = fits.open(img_path.format(truth["image_id"][0]))
+        idx = dataset.imgs[i].split(".")[0]
+        wcs_img = wcs_img = fits.open(img_path.format(idx))
         w = wcs.WCS(wcs_img[0].header).dropaxis(
             2
         )  # wcs generates a dummy axis corresponding to frequency.
