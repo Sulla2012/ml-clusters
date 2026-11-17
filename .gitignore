@@ -22,3 +22,7 @@ garbage/
 other-projects/
 
 figs/
+
+*.egg-info/
+.pytest_cache/
+reports/figs/

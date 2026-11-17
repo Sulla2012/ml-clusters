@@ -1,0 +1,40 @@
+[project]
+name = "mlclusters"
+version = "0.2.0"
+description = "Detect galaxy clusters in CMB maps with convolutional neural networks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "healpy",
+    "pixell",
+    "torch>=2.1",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+tiling = ["astLib"]
+dev = ["pytest", "ruff", "colossus"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mlclusters*"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["notebooks", "*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ANN"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
