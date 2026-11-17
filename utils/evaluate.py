@@ -31,8 +31,13 @@ def check_cat(cent, cat, tol=3.0 / 60.0):
 
 def reduce_cat(cents, tol=3.0 / 60.0):
     unique_cents = []
-    unique_cents.append(cents[0][0])
-    for i in range(len(cents)):
+    start = 0
+    while start < len(cents):
+        if len(cents[start][0]) > 0:
+            unique_cents.append(cents[start][0])
+            break
+        start += 1
+    for i in range(start, len(cents)):
         for j in range(len(cents[i])):
             if len(cents[i][j]) == 0:
                 continue  # Filter cents with no detected clusters

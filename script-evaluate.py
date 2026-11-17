@@ -84,38 +84,24 @@ model.load_state_dict(torch.load(model_path))
 dataset = ClusterDataset(
     args.root,
     get_transform(train=True),
-    cluster_dir="{}_freq_stamps".format(args.tile_type),
-    mask_dir="{}_freq_masks".format(args.tile_type),
+    cluster_dir="train_{}_freq_stamps".format(args.tile_type),
+    mask_dir="train_{}_freq_masks".format(args.tile_type),
 )
 dataset_test = ClusterDataset(
     args.root,
     get_transform(train=False),
-    cluster_dir="{}_freq_stamps".format(args.tile_type),
-    mask_dir="{}_freq_masks".format(args.tile_type),
+    cluster_dir="test_{}_freq_stamps".format(args.tile_type),
+    mask_dir="test_{}_freq_masks".format(args.tile_type),
 )
-# split the dataset in train and test set
-# TODO: currently this relies on the seed being set the same for the training and
-# evaluation which is really sketchy. I should probably just save the traingin
-# and evaluation datasets separately.
-torch.manual_seed(args.seed)
-indices = torch.randperm(len(dataset)).tolist()
-
-test_num = args.test_num
-imgs = np.array(dataset_test.imgs)[indices[:-test_num]]
-imgs_test = np.array(dataset_test.imgs)[indices[-test_num:]]
-dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
-dataset_test = torch.utils.data.Subset(dataset_test, indices[-test_num:])
-
-dataset_test.imgs = imgs_test
-dataset.imgs = imgs
 
 img_path = (
-    args.root + "/indv_freq_stamps/{:04}.fits"
+    args.root + "test_large_indv_freq_stamps/{:06}.fits"
 )  # TODO: make work with other stamp types
 
 cents = make_cat(
     model=model, dataset_test=dataset_test, img_path=img_path, device=device
 )
+
 pred_cat = reduce_cat(cents=cents)
 true_cat = make_cat_truth(dataset=dataset_test, img_path=img_path)
 true_cat = reduce_cat(true_cat, tol=1.0 / 60)
