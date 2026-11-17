@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing as mp
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,26 @@ from pixell import enmap, reproject, utils
 
 from .data import IMAGES, TILES
 from .geometry import TileWCS
+
+_SHARED: dict = {}  # full-sky map inherited by forked workers (copy-on-write)
+
+
+def _cut(coords: np.ndarray) -> np.ndarray:
+    """
+    Extract thumbnails from the shared map (worker function).
+
+    Parameters
+    ----------
+    coords : np.ndarray
+        ``(n, 2)`` ``(dec, ra)`` in radians.
+
+    Returns
+    -------
+    thumbs : np.ndarray
+        ``(n, ny, nx)`` float32 thumbnails.
+    """
+    m, kw = _SHARED["map"], _SHARED["kw"]
+    return np.asarray(reproject.thumbnails(m, coords, proj="tan", **kw), np.float32)
 
 
 def tile_centres(
@@ -43,7 +64,8 @@ def make_tiles(
     out_dir: Path,
     half_width_arcmin: float = 30.0,
     res_arcmin: float = 0.5,
-    chunk: int = 4096,
+    chunk: int = 512,
+    n_workers: int = 1,
 ) -> TileWCS:
     """
     Cut TAN tiles centred on ``(ra, dec)`` from each map and write them in packed format.
@@ -63,8 +85,10 @@ def make_tiles(
         Tile half-width.
     res_arcmin : float, default=0.5
         Tile pixel size.
-    chunk : int, default=4096
+    chunk : int, default=512
         Tiles extracted per call to pixell.
+    n_workers : int, default=1
+        Worker processes (forked, sharing the map in memory).
 
     Returns
     -------
@@ -79,14 +103,17 @@ def make_tiles(
         out_dir / IMAGES, mode="w+", dtype=np.float32, shape=(len(ra), len(map_paths), *oshape)
     )
     coords = np.radians(np.stack([dec, ra], axis=1))
+    starts = range(0, len(ra), chunk)
     for c, path in enumerate(map_paths):
         imap = enmap.read_map(str(path))
-        imap = imap.reshape(-1, *imap.shape[-2:])[0]  # temperature only
-        for s in range(0, len(ra), chunk):
-            images[s : s + chunk, c] = reproject.thumbnails(
-                imap, coords[s : s + chunk], r=r, res=res, proj="tan", oshape=oshape, owcs=owcs
-            )
+        _SHARED["map"] = imap.reshape(-1, *imap.shape[-2:])[0]  # temperature only
+        _SHARED["kw"] = {"r": r, "res": res, "oshape": oshape, "owcs": owcs}
+        with mp.get_context("fork").Pool(n_workers) as pool:
+            thumbs = pool.imap(_cut, (coords[s : s + chunk] for s in starts))
+            for s, th in zip(starts, thumbs, strict=True):
+                images[s : s + len(th), c] = th
         print(f"channel {c} done: {path}", flush=True)
+        _SHARED.clear()
         del imap
     images.flush()
     n = len(ra)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import healpy as hp
 import numpy as np
-from pixell import curvedsky, enmap, reproject, utils
+from pixell import curvedsky, enmap, reproject, utils, wcsutils
 
 T_CMB = 2.726  # K
 H_PLANCK, K_BOLTZ, C_LIGHT = 6.626068e-34, 1.3806503e-23, 299792458.0
@@ -90,6 +90,33 @@ def _healpix_to_car(path: Path, shape: tuple[int, ...], wcs: object) -> enmap.nd
     return reproject.healpix2map(hmap, shape=shape, wcs=wcs, lmax=3 * hp.npix2nside(hmap.size))
 
 
+def _car_on_geometry(path: Path, shape: tuple[int, ...], wcs: object) -> enmap.ndmap:
+    """
+    Read a CAR map and put it on the output geometry.
+
+    Maps already on the output pixelisation are used as is; others are
+    interpolated by WCS (``enmap.project``).
+
+    Parameters
+    ----------
+    path : Path
+        CAR FITS map.
+    shape : tuple[int, ...]
+        Output shape.
+    wcs : object
+        Output WCS.
+
+    Returns
+    -------
+    omap : enmap.ndmap
+        Map on ``(shape, wcs)``.
+    """
+    imap = enmap.read_map(str(path))
+    if imap.shape[-2:] == tuple(shape[-2:]) and wcsutils.equal(imap.wcs, wcs):
+        return imap
+    return enmap.project(imap, shape, wcs)
+
+
 def make_websky_map(
     band: str,
     root: Path,
@@ -121,15 +148,18 @@ def make_websky_map(
     b = BANDS[band]
     shape, wcs = enmap.fullsky_geometry(res=res_arcmin * utils.arcmin)
     alm = hp.read_alm(root / "lensed_alm.fits", hdu=1).astype(np.complex128)
-    omap = curvedsky.alm2map(alm, enmap.zeros(shape, wcs, np.float32))
+    omap = curvedsky.alm2map(alm, enmap.zeros(shape, wcs, np.float64))
+    print("added CMB", flush=True)
     omap += _healpix_to_car(root / "ksz.fits", shape, wcs)
+    print("added kSZ", flush=True)
     omap += b.tsz_factor * _healpix_to_car(root / "tsz_8192.fits", shape, wcs)
-    # CAR component maps use a slightly different pixelisation: interpolate by WCS
-    # rather than Fourier-resampling, which would shift them by up to half a pixel.
-    omap += b.cib_factor * enmap.project(enmap.read_map(str(root / b.cib)), shape, wcs)
-    omap += enmap.project(enmap.read_map(str(root / b.radio)), shape, wcs) / dbnu_dt(b.radio_ghz)
+    print("added tSZ", flush=True)
+    omap += b.cib_factor * _car_on_geometry(root / b.cib, shape, wcs)
+    print(f"added CIB ({b.cib})", flush=True)
+    omap += _car_on_geometry(root / b.radio, shape, wcs) / dbnu_dt(b.radio_ghz)
+    print(f"added radio ({b.radio})", flush=True)
     if noise_uk_arcmin:
         rng = np.random.default_rng(seed)
         pix_arcmin = np.sqrt(enmap.pixsizemap(shape, wcs)) / utils.arcmin
-        omap += rng.standard_normal(shape).astype(np.float32) * noise_uk_arcmin / pix_arcmin
+        omap += rng.standard_normal(shape) * noise_uk_arcmin / pix_arcmin
     return omap

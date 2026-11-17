@@ -12,7 +12,9 @@ _Last updated: 2026-11-17 (branch `refactor-centernet`)._
 | report | `reports/report.html` (self-contained; rebuild with `scripts/make_report.py`) |
 | halo catalogue (M200m > 1e14, z > 0.05, with M500c/θ500c) | `/mnt/welch/USERS/jorlo/ml-clusters/catalogs/websky_m1e14_z0.05.npz` |
 | packed WebSky tiles (original, f150/f220 misaligned by 1 px) | `/mnt/welch/USERS/jorlo/ml-clusters/websky_tiles/packed_large/` |
-| packed WebSky tiles, channels realigned (**use this**) | `/mnt/welch/USERS/jorlo/ml-clusters/websky_tiles/packed_large_aligned/` |
+| packed WebSky tiles, channels realigned | `/mnt/welch/USERS/jorlo/ml-clusters/websky_tiles/packed_large_aligned/` |
+| corrected WebSky f150 map (CIB from cib_153) | `/mnt/welch/USERS/jorlo/ml-clusters/maps/websky_f150_map_cibfix.fits` |
+| tiles re-cut from corrected maps, same centres, 121×121 (**use this**) | `/mnt/welch/USERS/jorlo/ml-clusters/websky_tiles/packed_v3_cibfix/` |
 | models | `/mnt/welch/USERS/jorlo/ml-clusters/models/clusternet-*/` (`best.pt`, `log.jsonl`, `config.json`) |
 | legacy Faster R-CNN | `/mnt/welch/USERS/jorlo/ml-clusters/models/torch-websky/` |
 
@@ -36,9 +38,9 @@ train/test directories, for comparisons with the legacy model only — it leaks 
 
 ## Open issues / next steps
 
-1. **Regenerate the WebSky f150 map** — the one on disk uses the 90 GHz CIB map (CIB ~5.7× too
-   faint at 150 GHz). `scripts/make_websky_map.py 150 ...` has the fix. Then re-cut tiles with
-   `scripts/make_tiles.py` (also yields properly aligned, centred 121×121 tiles).
+1. ~~Regenerate the WebSky f150 map~~ Done 2026-11-17: the original (cwhitaker's dir, left untouched)
+   used the 90 GHz CIB map. The new map differs from it by exactly 2594.7·(cib_153 − cib_90.2)
+   (0.000 uK residual), ~22 uK rms. Tiles re-cut from it into `packed_v3_cibfix`.
 2. **Domain gap to ACT**: the WebSky maps have no beam and no noise. Add per-band beam
    convolution and realistic (ideally ACT DR6 ivar-based) noise before applying to real data.
 3. Try a mass/SNR-dependent positive cut (many 2e14 halos at high z are below the noise in real
@@ -52,3 +54,4 @@ train/test directories, for comparisons with the legacy model only — it leaks 
 ## Log
 
 - 2026-11-17: refactor into `mlclusters`; mass-scaled masks; ClusterNet; bug audit (see report).
+- 2026-11-17: regenerated f150 map with CIB fix (5 min, 23 GB RAM); re-cut tiles; training v3 on them.

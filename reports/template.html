@@ -103,7 +103,10 @@ I confirmed this by re-cutting tiles at the same centres with the new <code>make
 <tr><td>websky_f220</td><td>cib_217</td><td>2.07e3</td><td>2.07e3</td></tr>
 </table>
 <p>So the f150 map on disk uses the <b>90 GHz CIB map</b>, which makes its CIB ~5.7× too faint. The current <code>webskymaker.py</code> has a different bug: its 90/150 CIB factors are
-swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code> fixes both, along with the noise path and a resampling shift (items S1–S4).</p>
+swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code> fixes both, plus the broken noise path (items S1–S2). The regenerated f150 map is validated in §4.3.</p>
+
+<h3>4.3 Regenerated f150 map</h3>
+<p>{{text:f150}}</p>
 
 <h2>5. Bug audit (pre-refactor code)</h2>
 <p>Severity: <span class="sev-h">high</span> = changes results; <span class="sev-m">medium</span> = wrong in some cases or crashes a code path; <span class="sev-l">low</span> = latent or cosmetic.
@@ -127,9 +130,8 @@ All are fixed in the refactor or by the new pipeline unless noted.</p>
 <tr><td>T5</td><td>script-train.py</td><td>Silently resumes from a hard-coded checkpoint path if it exists; evaluate looks in a different directory; <code>torch.load</code> without <code>map_location</code>.</td><td class="sev-l">low</td><td class="fixed">explicit out_dir, checkpoints carry config</td></tr>
 <tr><td>S1</td><td>webskymaker.py</td><td>CIB conversion factors for 90 and 150 GHz swapped (correct: 4.68e3 / 2.59e3 μK per MJy/sr).</td><td class="sev-h">high</td><td class="fixed">mlclusters.websky</td></tr>
 <tr><td>S2</td><td>webskymaker.py</td><td><code>from maps import *</code> (orphics, not present) and undefined <code>ivar</code>, so the noise option crashes.</td><td class="sev-m">medium</td><td class="fixed">pixell-based white noise</td></tr>
-<tr><td>S3</td><td>webskymaker.py</td><td><code>enmap.resample</code> Fourier-resamples 21601-row CAR maps onto 21600 rows, shifting CIB/radio by up to ~0.5′.</td><td class="sev-l">low</td><td class="fixed">enmap.project</td></tr>
-<tr><td>S4</td><td>stamping_utils.make_stamp / normalize_map</td><td>Undefined <code>PathError</code>/<code>freq</code>; <code>normalize_map</code> normalises per <i>column</i> of a 2-D map and returns −1, which breaks tuple unpacking; RA offsets not divided by cos δ; <code>ra_max &lt; ra_min</code> can never trigger, so the RA wrap is unhandled.</td><td class="sev-m">medium</td><td class="fixed">mlclusters.stamps</td></tr>
-<tr><td>S5</td><td>constants.zofchi</td><td>Left Riemann sum offsets χ(z) by one step (~0.1% in z).</td><td class="sev-l">low</td><td class="fixed">astropy distances</td></tr>
+<tr><td>S3</td><td>stamping_utils.make_stamp / normalize_map</td><td>Undefined <code>PathError</code>/<code>freq</code>; <code>normalize_map</code> normalises per <i>column</i> of a 2-D map and returns −1, which breaks tuple unpacking; RA offsets not divided by cos δ; <code>ra_max &lt; ra_min</code> can never trigger, so the RA wrap is unhandled.</td><td class="sev-m">medium</td><td class="fixed">mlclusters.stamps</td></tr>
+<tr><td>S4</td><td>constants.zofchi</td><td>Left Riemann sum offsets χ(z) by one step (~0.1% in z).</td><td class="sev-l">low</td><td class="fixed">astropy distances</td></tr>
 <tr><td>X1</td><td>~/venvs/general</td><td>The venv's <code>python</code> resolves to the system interpreter, so its site-packages are never on <code>sys.path</code>.</td><td class="sev-l">low</td><td>not changed (user env)</td></tr>
 </table></div>
 
