@@ -32,20 +32,6 @@ def _make_parser() -> argp.ArgumentParser:
         help="What type of images to train on.",
     )
     parser.add_argument(
-        "--seed",
-        "-s",
-        type=int,
-        default=1,
-        help="Seed to use for splitting train/test.",
-    )
-    parser.add_argument(
-        "--test_num",
-        "-tn",
-        type=int,
-        default=200,
-        help="Number of training images to reserve.",
-    )
-    parser.add_argument(
         "--backbone",
         "-bb",
         type=str,
@@ -84,26 +70,16 @@ def main():
     dataset = ClusterDataset(
         args.root,
         get_transform(train=True),
-        cluster_dir="{}_freq_stamps".format(args.tile_type),
-        mask_dir="{}_freq_masks".format(args.tile_type),
+        cluster_dir="train_{}_freq_stamps".format(args.tile_type),
+        mask_dir="train_{}_freq_masks".format(args.tile_type),
     )
     dataset_test = ClusterDataset(
         args.root,
         get_transform(train=False),
-        cluster_dir="{}_freq_stamps".format(args.tile_type),
-        mask_dir="{}_freq_masks".format(args.tile_type),
-    )
+        cluster_dir="test_{}_freq_stamps".format(args.tile_type),
+        mask_dir="test_{}_freq_masks".format(args.tile_type),
+    )  
 
-    # split the dataset in train and test set
-    torch.manual_seed(args.seed)
-    indices = torch.randperm(len(dataset)).tolist()
-
-    test_num = args.test_num
-    if args.train_num is not None:
-        dataset = torch.utils.data.Subset(dataset, indices[:args.train_num])
-    else:
-        dataset = torch.utils.data.Subset(dataset, indices[:-test_num])
-    dataset_test = torch.utils.data.Subset(dataset_test, indices[-test_num:])
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(
         dataset,
