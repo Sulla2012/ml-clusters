@@ -51,6 +51,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--sigma_frac", type=float, default=MaskConfig.sigma_frac)
     p.add_argument("--no_compile", action="store_true", help="Disable torch.compile.")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--split", default="split.npz", help="Split file in the tile directory.")
     p.add_argument("--debug", action="store_true", help="Tiny run: 2 epochs, few batches.")
     return p
 
@@ -63,7 +64,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     tiles = PackedTiles(args.tiles)
-    split = np.load(args.tiles / "split.npz")["split"]
+    split = np.load(args.tiles / args.split)["split"]
     train_idx, val_idx = np.where(split == 0)[0], np.where(split == 1)[0]
     max_steps = None
     if args.debug:

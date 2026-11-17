@@ -263,7 +263,7 @@ class CatalogScores:
         t : float
             Best threshold.
         """
-        thresholds = np.linspace(0.05, 0.95, 91) if thresholds is None else thresholds
+        thresholds = np.linspace(0.02, 0.99, 98) if thresholds is None else thresholds
         c = self.curves(thresholds)
         return float(c["threshold"][np.argmax(c["f1"])])
 

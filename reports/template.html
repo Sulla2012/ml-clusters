@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ml-clusters report</title>
+<style>
+  :root { --bg:#fff; --fg:#1d2330; --muted:#5b6475; --line:#d9dee7; --accent:#1f6feb; --card:#f6f8fb;
+          --bad:#b42318; --ok:#067647; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141b; --fg:#e6e9ef; --muted:#9aa4b5; --line:#2a3240;
+          --accent:#6ea8fe; --card:#161c25; --bad:#f97066; --ok:#47cd89; } }
+  body { background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, -apple-system, Segoe UI, sans-serif;
+         max-width:1100px; margin:0 auto; padding:24px 16px 80px; }
+  h1 { font-size:1.9rem; margin-bottom:0.2rem; } h2 { margin-top:2.4rem; border-bottom:1px solid var(--line); padding-bottom:0.3rem; }
+  h3 { margin-top:1.6rem; } .sub { color:var(--muted); margin-top:0; }
+  img { max-width:100%; height:auto; background:#fff; border-radius:6px; border:1px solid var(--line); }
+  table { border-collapse:collapse; width:100%; margin:0.8rem 0; font-size:0.93rem; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  th { background:var(--card); } code { background:var(--card); padding:1px 4px; border-radius:4px; font-size:0.9em; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin:1rem 0; }
+  .sev-h { color:var(--bad); font-weight:600; } .sev-m { color:#b54708; font-weight:600; } .sev-l { color:var(--muted); font-weight:600; }
+  .fixed { color:var(--ok); }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>ml-clusters: mass-scaled masks, ClusterNet, and bug audit</h1>
+<p class="sub">Branch <code>refactor-centernet</code> · 2026-11-17 · WebSky simulations, ACT-like f090/f150/f220</p>
+
+<div class="card">
+<b>Summary.</b> {{text:summary}}
+</div>
+
+<h2>1. Mass-scaled cluster masks</h2>
+<p>The mask (training target) radius for each cluster is now its angular size θ500c = R500c / d<sub>A</sub>(z).
+WebSky provides M200m; M500c and R500c follow from an NFW profile with the Duffy et al. (2008) concentration
+c200m(M, z), solved by vectorised bisection (agrees with <code>colossus</code> to 1e-4) in the WebSky cosmology
+(flat ΛCDM, Ω<sub>m</sub> = 0.31, h = 0.68). Radii are clipped to [1′, 6′]: the floor keeps every mask resolvable (≥ 2 px at 0.5′),
+the ceiling stops the rare very-low-z halos from covering the tile. Median θ500c for M200m &gt; 2×10<sup>14</sup> is 1.65′ (the old fixed
+radius was 1.2′) with a long tail to &gt; 6′.</p>
+<p>Halos with 10<sup>14</sup> ≤ M200m &lt; 2×10<sup>14</sup> are real SZ sources but below the positive cut, so their discs (and those
+of positives centred just outside the tile) are <i>ignore</i> regions: the loss neither rewards nor penalises detections there.</p>
+{{fig:sizes}}
+{{fig:masks}}
+<p>The notebook implementation this replaces (<code>halo-masks.ipynb</code>) had several unit errors that together made masks about
+0.3/(1+z) of θ200c, i.e. ~5× too small at z = 0.5 (details in the bug table, items M1–M2).</p>
+
+<h2>2. New network: ClusterNet</h2>
+<ul>
+<li><b>Architecture:</b> ConvNeXt U-Net (stages 32/64/128/256 channels, depths 2/2/6/2, 2.6 M parameters) with a full-resolution
+stem, plus two CenterNet-style heads: a cluster-centre heatmap (penalty-reduced focal loss with ignore weights) and log radius (L1 at centres).
+Detections are 3×3 local maxima with sub-pixel centroiding; each comes with a predicted radius.</li>
+<li><b>Why:</b> clusters are small (2–12 px), round, and mostly isolated. An anchor-free, full-resolution, fully convolutional detector fits that
+better than Faster R-CNN with ImageNet normalisation and 120→800 px upsampling. It works on any tile size and any number of
+frequency channels, so it is ready for larger maps and extra bands.</li>
+<li><b>Training:</b> AdamW (lr 2e-3, wd 0.05), linear warm-up + cosine decay, bf16 autocast, <code>torch.compile</code>, batch 64, random
+dihedral (8-fold) augmentation; ~800 img/s on the A6000 (~4 min per epoch over 145k tiles).</li>
+<li><b>Inputs:</b> per-tile median removed, divided by a global per-channel robust σ (keeps the relative amplitudes between frequencies that carry the
+tSZ spectral signature), then compressed with 3·asinh(x/3) to tame point sources.</li>
+<li><b>Data:</b> the 186,784 FITS tiles are packed into one 32 GB memmap; targets are rendered on the fly from the halo catalogue, so mask
+settings can change without regenerating any files.</li>
+</ul>
+{{fig:examples}}
+
+<h2>3. Evaluation</h2>
+<p><b>Protocol.</b> Detections within 2 px of a tile edge are dropped; the rest are converted to the sky with each tile's WCS, de-duplicated
+across overlapping tiles (sky NMS at 2′) and matched one-to-one (greedy by score) to catalogue halos with M200m &gt; 2×10<sup>14</sup> within 2′.
+Completeness uses halos inside the searched footprint. The score threshold is chosen on the validation split (max F1) and then applied to test.
+"Purity (incl.)" also counts detections of 10<sup>14</sup>–2×10<sup>14</sup> halos as real.</p>
+
+<h3>3.1 Leak-free spatial split</h3>
+<p>Train/val/test are HEALPix nside=4 regions (~215 deg²) in an 80/10/10 ratio; tiles that straddle a region boundary are discarded, so no sky pixel
+appears in two splits (145,196 / 15,325 / 14,775 tiles).</p>
+<div class="scroll">{{table:metrics}}</div>
+{{fig:pc}}
+{{fig:completeness}}
+{{fig:radius}}
+{{fig:training}}
+
+<h3>3.2 Head-to-head with the legacy Faster R-CNN</h3>
+<p>The legacy model was trained on the old split, whose test tiles share sky with its training tiles, so no clean test set exists for it.
+For a like-for-like comparison, ClusterNet was also trained on exactly the legacy training tiles (original, misaligned channels) and both models were
+scored with the same code on the legacy test tiles (18,723 tiles centred on the lowest-mass 10% of halos). Both numbers here are optimistic because of the shared sky.</p>
+<div class="scroll">{{table:metrics_legacy}}</div>
+{{fig:pc_legacy}}
+{{fig:completeness_legacy}}
+<p>{{text:old_metric}}</p>
+
+<h2>4. Data problems found</h2>
+<h3>4.1 Frequency channels misaligned by one pixel</h3>
+<p>In every existing tile, the f150 and f220 channels sit 1 px (0.5′) higher in Dec than f090 and the stored WCS. <code>make_stamp</code> passed
+<code>proj="tan"</code> only for the first frequency; pixell's default for the others is a CAR thumbnail with a different reference pixel.
+I confirmed this by re-cutting tiles at the same centres with the new <code>make_tiles</code>: after a +1-row shift of f150/f220, old and new tiles agree to 0.8% / 4.5% rms
+(versus 12% / 68% without the shift). <code>scripts/realign_channels.py</code> writes a corrected copy.</p>
+{{fig:alignment}}
+
+<h3>4.2 Wrong CIB in the WebSky f150 map; swapped constants in the map maker</h3>
+<p>Regressing each map on the component templates (CMB synthesised from <code>lensed_alm.fits</code> in a 4°×4° patch, coefficient 1.000):</p>
+<table>
+<tr><th>map</th><th>best-fitting CIB template</th><th>fitted factor [μK per MJy/sr]</th><th>correct factor</th></tr>
+<tr><td>websky_f090</td><td>cib_90.2</td><td>4.55e3</td><td>4.68e3 (93 GHz)</td></tr>
+<tr><td>websky_f150</td><td><b>cib_90.2</b> (not cib_153)</td><td>2.51e3</td><td>2.59e3 × cib_153</td></tr>
+<tr><td>websky_f220</td><td>cib_217</td><td>2.07e3</td><td>2.07e3</td></tr>
+</table>
+<p>So the f150 map on disk uses the <b>90 GHz CIB map</b>, which makes its CIB ~5.7× too faint. The current <code>webskymaker.py</code> has a different bug: its 90/150 CIB factors are
+swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code> fixes both, along with the noise path and a resampling shift (items S1–S4).</p>
+
+<h2>5. Bug audit (pre-refactor code)</h2>
+<p>Severity: <span class="sev-h">high</span> = changes results; <span class="sev-m">medium</span> = wrong in some cases or crashes a code path; <span class="sev-l">low</span> = latent or cosmetic.
+All are fixed in the refactor or by the new pipeline unless noted.</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>where</th><th>problem</th><th>sev.</th><th>status</th></tr>
+<tr><td>D1</td><td>stamping_utils.make_stamp</td><td>f150/f220 cut with CAR thumbnails (only f090 used <code>proj="tan"</code>), so they sit 1 px off the f090 grid/WCS in all training data.</td><td class="sev-h">high</td><td class="fixed">fixed (make_tiles); realign script for existing tiles</td></tr>
+<tr><td>D2</td><td>WebSky f150 map on disk</td><td>Built with the 90 GHz CIB map; CIB ~5.7× too faint at 150 GHz.</td><td class="sev-h">high</td><td>map must be regenerated (code fixed)</td></tr>
+<tr><td>E1</td><td>script-train / script-evaluate</td><td>Train/test split by catalogue index, i.e. by <i>mass</i> (test = lowest-mass 10% of centre halos), and 1° tiles centred on every halo overlap heavily, so test sky is in the training set.</td><td class="sev-h">high</td><td class="fixed">spatial HEALPix split</td></tr>
+<tr><td>E2</td><td>utils/evaluate.get_real_clusters</td><td><code>continue</code> where <code>break</code> was meant: every (pred, truth) pair within 2′ is counted, so duplicates inflate both purity and completeness (completeness can exceed 1).</td><td class="sev-h">high</td><td class="fixed">one-to-one matching</td></tr>
+<tr><td>E3</td><td>utils/evaluate (check_cat, get_real_clusters)</td><td>Separations are Euclidean in (RA, Dec) degrees: no cos δ (RA offsets under-weighted 2× at δ = −60°) and no RA wrap at 0/360.</td><td class="sev-m">medium</td><td class="fixed">KD-tree on unit vectors</td></tr>
+<tr><td>E4</td><td>utils/evaluate</td><td>Truth positions from mask bounding-box centres (biased for edge-truncated masks); truths reduced at 1′ but predictions at 3′; <code>reduce_cat</code> is O(N²) and crashes when nothing is detected.</td><td class="sev-m">medium</td><td class="fixed">catalogue positions, consistent NMS</td></tr>
+<tr><td>M1</td><td>halo-masks.ipynb</td><td><code>M/h</code> instead of <code>M·h</code> to get Msun/h; <code>R·h</code> instead of <code>R/h</code> back to Mpc; physical radius divided by <i>comoving</i> distance; fixed c = 7.</td><td class="sev-h">high</td><td class="fixed">mlclusters.halos</td></tr>
+<tr><td>M2</td><td>stamping_utils.make_mask</td><td>Only accepts a scalar size (an array of per-cluster sizes broadcasts wrongly); <code>size</code> is a diameter while the notebook passed a radius; RA wrap ignored when selecting in-tile clusters.</td><td class="sev-m">medium</td><td class="fixed">per-cluster radii, WCS projection</td></tr>
+<tr><td>M3</td><td>bad_stamp_remover.py</td><td>Deletes the whole tile (image and mask) whenever any edge-truncated cluster gives a degenerate box. This is silent data loss.</td><td class="sev-m">medium</td><td class="fixed">not needed (ignore regions)</td></tr>
+<tr><td>M4</td><td>training targets</td><td>Halos just below 2e14 (real SZ sources) labelled as background, so the model is penalised for detecting them.</td><td class="sev-m">medium</td><td class="fixed">ignore band 1e14–2e14</td></tr>
+<tr><td>T1</td><td>utils/nn + torchvision</td><td>Raw μK maps go through GeneralizedRCNNTransform: ImageNet mean/std normalisation and 120→800 px upsampling.</td><td class="sev-m">medium</td><td class="fixed">physical normalisation</td></tr>
+<tr><td>T2</td><td>utils/nn.get_instance_frcnn_model</td><td><code>backbone_model.fc = Linear(512, 2)</code> is a no-op for MobileNetV2 (its head is <code>.classifier</code>), so the backbone pre-training used a 1000-way head.</td><td class="sev-l">low</td><td class="fixed">removed</td></tr>
+<tr><td>T3</td><td>utils/nn</td><td><code>FastRCNNPredictor</code>/<code>MaskRCNNPredictor</code> never imported, so the ResNet and Mask R-CNN paths raise NameError.</td><td class="sev-m">medium</td><td class="fixed">removed</td></tr>
+<tr><td>T4</td><td>utils/nn.ClusterDataset</td><td>Empty targets have labels of shape (1,) with boxes of shape (0, 4); <code>str.strip(".fits")</code> strips characters, not the suffix.</td><td class="sev-l">low</td><td class="fixed">removed</td></tr>
+<tr><td>T5</td><td>script-train.py</td><td>Silently resumes from a hard-coded checkpoint path if it exists; evaluate looks in a different directory; <code>torch.load</code> without <code>map_location</code>.</td><td class="sev-l">low</td><td class="fixed">explicit out_dir, checkpoints carry config</td></tr>
+<tr><td>S1</td><td>webskymaker.py</td><td>CIB conversion factors for 90 and 150 GHz swapped (correct: 4.68e3 / 2.59e3 μK per MJy/sr).</td><td class="sev-h">high</td><td class="fixed">mlclusters.websky</td></tr>
+<tr><td>S2</td><td>webskymaker.py</td><td><code>from maps import *</code> (orphics, not present) and undefined <code>ivar</code>, so the noise option crashes.</td><td class="sev-m">medium</td><td class="fixed">pixell-based white noise</td></tr>
+<tr><td>S3</td><td>webskymaker.py</td><td><code>enmap.resample</code> Fourier-resamples 21601-row CAR maps onto 21600 rows, shifting CIB/radio by up to ~0.5′.</td><td class="sev-l">low</td><td class="fixed">enmap.project</td></tr>
+<tr><td>S4</td><td>stamping_utils.make_stamp / normalize_map</td><td>Undefined <code>PathError</code>/<code>freq</code>; <code>normalize_map</code> normalises per <i>column</i> of a 2-D map and returns −1, which breaks tuple unpacking; RA offsets not divided by cos δ; <code>ra_max &lt; ra_min</code> can never trigger, so the RA wrap is unhandled.</td><td class="sev-m">medium</td><td class="fixed">mlclusters.stamps</td></tr>
+<tr><td>S5</td><td>constants.zofchi</td><td>Left Riemann sum offsets χ(z) by one step (~0.1% in z).</td><td class="sev-l">low</td><td class="fixed">astropy distances</td></tr>
+<tr><td>X1</td><td>~/venvs/general</td><td>The venv's <code>python</code> resolves to the system interpreter, so its site-packages are never on <code>sys.path</code>.</td><td class="sev-l">low</td><td>not changed (user env)</td></tr>
+</table></div>
+
+<h2>6. Caveats and next steps</h2>
+<ul>
+<li>The WebSky maps have <b>no beam and no noise</b>, so absolute purity/completeness here are far higher than achievable on ACT data. Add per-band beams
+and realistic noise (ideally ACT DR6 inverse-variance maps) before applying to real maps.</li>
+<li>Regenerate the f150 map with the CIB fix and re-cut the tiles with <code>make_tiles.py</code> (aligned, centred 121×121 tiles).</li>
+<li>Natural extensions: a log M500c regression head, a mass/SNR-dependent positive cut, and inference on large maps rather than per-cluster tiles.</li>
+</ul>
+</body>
+</html>

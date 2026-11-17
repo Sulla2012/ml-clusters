@@ -13,7 +13,7 @@ from mlclusters.legacy import frcnn_detector, load_legacy_frcnn
 from mlclusters.masks import MaskConfig
 from mlclusters.training import heat_detector, load_checkpoint
 
-THRESHOLDS = np.round(np.linspace(0.02, 0.98, 49), 2)
+THRESHOLDS = np.round(np.linspace(0.02, 0.99, 98), 2)
 
 
 def _make_parser() -> argp.ArgumentParser:
@@ -34,6 +34,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--edge", type=float, default=2.0, help="Tile edge margin [pix].")
     p.add_argument("--batch_size", "-b", type=int, default=128)
     p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--split", default="split.npz", help="Split file in the tile directory.")
     p.add_argument("--debug", action="store_true", help="Only use 300 tiles per split.")
     return p
 
@@ -87,7 +88,7 @@ def main() -> None:
     args = _make_parser().parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tiles = PackedTiles(args.tiles)
-    split = np.load(args.tiles / "split.npz")["split"]
+    split = np.load(args.tiles / args.split)["split"]
     if args.legacy:
         model, cfg = load_legacy_frcnn(args.model, device), MaskConfig()
         norm, detector = Normalizer.identity(tiles.images.shape[1]), frcnn_detector(model)
