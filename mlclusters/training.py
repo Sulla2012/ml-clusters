@@ -183,11 +183,11 @@ def run_epoch(
     Returns
     -------
     losses : dict[str, float]
-        Mean ``loss``, ``heat`` and ``radius`` over the pass.
+        Mean ``loss``, ``heat``, ``radius`` and ``mass`` over the pass.
     """
     train = opt is not None
     model.train(train)
-    sums = {"loss": 0.0, "heat": 0.0, "radius": 0.0}
+    sums = {"loss": 0.0, "heat": 0.0, "radius": 0.0, "mass": 0.0}
     n, t0 = 0, time.time()
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:

@@ -30,6 +30,9 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("model", type=Path, help="ClusterNet checkpoint, or legacy .pth with --legacy.")
     p.add_argument("out", type=Path, help="Output prefix for <out>.json and <out>.npz.")
     p.add_argument("--legacy", action="store_true", help="Model is a legacy Faster R-CNN.")
+    p.add_argument(
+        "--no_mass_cut", action="store_true", help="Ignore a mass head's M200m when selecting."
+    )
     p.add_argument("--match_arcmin", type=float, default=2.0, help="Matching radius.")
     p.add_argument("--edge", type=float, default=2.0, help="Tile edge margin [pix].")
     p.add_argument("--batch_size", "-b", type=int, default=128)
@@ -80,7 +83,10 @@ def _scores(
     dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, num_workers=args.workers)
     dets = predict(detector, dl, device)
     print(f"{split_name}: {len(idx)} tiles, {len(dets.score)} raw detections", flush=True)
-    return score_catalog(dets, tiles, idx, cfg, args.edge, args.match_arcmin, args.match_arcmin)
+    mass_cut = None if args.no_mass_cut else cfg.m_cut
+    return score_catalog(
+        dets, tiles, idx, cfg, args.edge, args.match_arcmin, args.match_arcmin, mass_cut
+    )
 
 
 def main() -> None:
@@ -121,6 +127,7 @@ def main() -> None:
         det_dec=det.dec,
         det_score=det.score,
         det_radius_pix=det.radius,
+        det_m200m=det.m200m,
         det_match=test.det_match,
         det_real=test.det_real,
         truth_score=test.truth_score,

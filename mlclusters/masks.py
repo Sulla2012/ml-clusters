@@ -293,8 +293,10 @@ def tile_training_maps(
     -------
     maps : dict[str, np.ndarray]
         ``heat`` (centre heatmap), ``radius`` (log mask radius in pixels at
-        centre pixels), ``reg_mask`` (1 at centre pixels) and ``weight``
-        (0 inside ignore regions, 1 elsewhere).
+        centre pixels), ``reg_mask`` (1 at centre pixels), ``weight``
+        (0 inside ignore regions, 1 elsewhere), and ``logm`` (log10 M200m/1e14)
+        with ``mass_mask`` set at the centres of every in-tile halo above
+        ``m_ignore``, so a mass head also learns to rank sub-threshold halos.
     """
     ny, nx = shape
     r = radius_pix(rows["theta500c"], pix_arcmin, cfg)
@@ -311,4 +313,17 @@ def tile_training_maps(
     reg_mask[iy, ix] = 1.0
     weight = (make_mask(shape, x[ignore], y[ignore], r[ignore]) == 0).astype(np.float32)
     weight = np.maximum(weight, heat > 0.5)  # never ignore a positive's core
-    return {"heat": heat, "radius": radius, "reg_mask": reg_mask, "weight": weight}
+    logm, mass_mask = np.zeros(shape, np.float32), np.zeros(shape, np.float32)
+    real = inside & (m >= cfg.m_ignore)
+    iy, ix = np.round(y[real]).astype(int), np.round(x[real]).astype(int)
+    order = np.argsort(m[real])  # heavier halo wins a shared centre pixel
+    logm[iy[order], ix[order]] = np.log10(m[real][order] / 1e14)
+    mass_mask[iy, ix] = 1.0
+    return {
+        "heat": heat,
+        "radius": radius,
+        "reg_mask": reg_mask,
+        "weight": weight,
+        "logm": logm,
+        "mass_mask": mass_mask,
+    }

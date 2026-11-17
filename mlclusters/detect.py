@@ -31,6 +31,8 @@ class Detections:
         Detection score.
     radius : np.ndarray
         Predicted radius in pixels (NaN if the detector has none).
+    m200m : np.ndarray
+        Predicted M200m in Msun (NaN if the detector has no mass head).
     ra, dec : np.ndarray
         Sky position in degrees (filled by :func:`to_sky`).
     """
@@ -40,6 +42,7 @@ class Detections:
     y: np.ndarray
     score: np.ndarray
     radius: np.ndarray
+    m200m: np.ndarray
     ra: np.ndarray | None = None
     dec: np.ndarray | None = None
 
@@ -83,7 +86,8 @@ def predict(
     dets : Detections
         All detections.
     """
-    cols: dict[str, list[np.ndarray]] = {k: [] for k in ("tile", "x", "y", "score", "radius")}
+    keys = ("tile", "x", "y", "score", "radius", "m200m")
+    cols: dict[str, list[np.ndarray]] = {k: [] for k in keys}
     for batch in loader:
         dets = detector(batch["image"].to(device, non_blocking=True))
         for t, d in zip(batch["index"].numpy(), dets, strict=True):
@@ -91,8 +95,9 @@ def predict(
             cols["tile"].append(np.full(n, t))
             for k in ("x", "y", "score"):
                 cols[k].append(d[k].float().cpu().numpy())
-            r = d.get("radius")
-            cols["radius"].append(np.full(n, np.nan) if r is None else r.float().cpu().numpy())
+            for k in ("radius", "m200m"):
+                v = d.get(k)
+                cols[k].append(np.full(n, np.nan) if v is None else v.float().cpu().numpy())
     return Detections(**{k: np.concatenate(v) for k, v in cols.items()})
 
 
@@ -276,6 +281,7 @@ def score_catalog(
     edge: float = 2.0,
     match_arcmin: float = 2.0,
     dedupe_arcmin: float = 2.0,
+    mass_cut: float | None = None,
 ) -> CatalogScores:
     """
     De-duplicate detections across overlapping tiles and match them to the truth.
@@ -297,6 +303,9 @@ def score_catalog(
         Matching radius.
     dedupe_arcmin : float, default=2.0
         Detections closer than this are merged (highest score kept).
+    mass_cut : float, optional
+        Drop detections whose predicted M200m is below this (detectors with
+        a mass head only; NaN masses are kept).
 
     Returns
     -------
@@ -304,6 +313,8 @@ def score_catalog(
         Matched catalogue.
     """
     dets = to_sky(dets.select(in_footprint(dets.x, dets.y, tiles.shape, edge)), tiles)
+    if mass_cut is not None:
+        dets = dets.select(~(dets.m200m < mass_cut))
     dets = dets.select(dedupe(dets.ra, dets.dec, dets.score, dedupe_arcmin))
     truth = truth_in_footprint(tiles, idx, cfg.m_cut, edge)
     match = one_to_one_match(dets.ra, dets.dec, dets.score, truth["ra"], truth["dec"], match_arcmin)

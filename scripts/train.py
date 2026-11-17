@@ -41,6 +41,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--warmup", type=float, default=0.5, help="Warm-up length in epochs.")
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--radius_weight", type=float, default=1.0)
+    p.add_argument("--mass_head", action="store_true", help="Also regress log M200m.")
     p.add_argument("--dims", type=int, nargs="+", default=list(ModelConfig.dims))
     p.add_argument("--depths", type=int, nargs="+", default=list(ModelConfig.depths))
     p.add_argument("--m_cut", type=float, default=MaskConfig.m_cut, help="Positive M200m cut.")
@@ -94,7 +95,10 @@ def main() -> None:
     val_dl = torch.utils.data.DataLoader(TileDataset(tiles, val_idx, norm, cfg), **loader_kw)
 
     mcfg = ModelConfig(
-        in_chans=tiles.images.shape[1], dims=tuple(args.dims), depths=tuple(args.depths)
+        in_chans=tiles.images.shape[1],
+        dims=tuple(args.dims),
+        depths=tuple(args.depths),
+        mass_head=args.mass_head,
     )
     model = ClusterNet(mcfg).to(device).to(memory_format=torch.channels_last)
     net = model if args.no_compile or device.type != "cuda" else torch.compile(model)
@@ -115,7 +119,9 @@ def main() -> None:
         tr = run_epoch(net, train_dl, device, opt, sched, args.radius_weight, max_steps)
         va = run_epoch(net, val_dl, device, radius_weight=args.radius_weight)
         net.eval()
-        scores = score_catalog(predict(heat_detector(net), val_dl, device), tiles, val_idx, cfg)
+        dets = predict(heat_detector(net), val_dl, device)
+        mass_cut = cfg.m_cut if args.mass_head else None
+        scores = score_catalog(dets, tiles, val_idx, cfg, mass_cut=mass_cut)
         thr = scores.best_threshold()
         best = {k: float(v[0]) for k, v in scores.curves(np.array([thr])).items()}
         lr = sched.get_last_lr()[0]

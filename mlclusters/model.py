@@ -26,6 +26,8 @@ class ModelConfig:
         ConvNeXt blocks per decoder stage.
     drop_path : float
         Maximum stochastic-depth rate.
+    mass_head : bool
+        Add a head regressing log10(M200m / 1e14) at cluster centres.
     """
 
     in_chans: int = 3
@@ -33,6 +35,7 @@ class ModelConfig:
     depths: tuple[int, ...] = field(default=(2, 2, 6, 2))
     dec_depth: int = 1
     drop_path: float = 0.1
+    mass_head: bool = False
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -132,6 +135,7 @@ class ClusterNet(nn.Module):
             self.dec.insert(0, nn.Sequential(*[ConvNeXtBlock(prev) for _ in range(cfg.dec_depth)]))
         self.heat_head = self._head(dims[0], prior=0.01)
         self.radius_head = self._head(dims[0])
+        self.mass_head = self._head(dims[0]) if cfg.mass_head else None
 
     @staticmethod
     def _head(dim: int, prior: float | None = None) -> nn.Sequential:
@@ -170,7 +174,8 @@ class ClusterNet(nn.Module):
         Returns
         -------
         out : dict[str, torch.Tensor]
-            ``heat`` (logits) and ``radius`` (log pixels), each ``(n, 1, h, w)``.
+            ``heat`` (logits), ``radius`` (log pixels) and, with a mass head,
+            ``logm`` (log10 M200m/1e14), each ``(n, 1, h, w)``.
         """
         h, w = x.shape[-2:]
         stride = 2 ** (len(self.cfg.dims) - 1)
@@ -184,7 +189,10 @@ class ClusterNet(nn.Module):
         for up, fuse, dec in zip(self.up, self.fuse, self.dec, strict=True):
             x = dec(fuse(torch.cat([up(x), skips.pop()], dim=1)))
         x = x[..., :h, :w]
-        return {"heat": self.heat_head(x), "radius": self.radius_head(x)}
+        out = {"heat": self.heat_head(x), "radius": self.radius_head(x)}
+        if self.mass_head is not None:
+            out["logm"] = self.mass_head(x)
+        return out
 
 
 def focal_loss(
@@ -222,31 +230,58 @@ def focal_loss(
     return (pos_loss + neg_loss) / pos.sum().clamp(min=1)
 
 
+def _masked_l1(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """
+    Mean L1 error over the pixels where ``mask`` is 1.
+
+    Parameters
+    ----------
+    pred, target, mask : torch.Tensor
+        Same-shaped tensors.
+
+    Returns
+    -------
+    loss : torch.Tensor
+        Scalar loss (0 if the mask is empty).
+    """
+    err = F.l1_loss(pred.float(), target, reduction="none") * mask
+    return err.sum() / mask.sum().clamp(min=1)
+
+
 def detection_loss(
-    out: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], radius_weight: float = 1.0
+    out: dict[str, torch.Tensor],
+    batch: dict[str, torch.Tensor],
+    radius_weight: float = 1.0,
+    mass_weight: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     """
-    Total training loss: focal heatmap loss plus L1 on log radius at centres.
+    Total loss: focal heatmap loss, L1 on log radius and (optionally) on log mass.
 
     Parameters
     ----------
     out : dict[str, torch.Tensor]
         Model outputs.
     batch : dict[str, torch.Tensor]
-        Targets ``heat``, ``radius``, ``reg_mask`` and ``weight``.
+        Targets ``heat``, ``radius``, ``reg_mask``, ``weight`` (and ``logm``,
+        ``mass_mask`` when the model has a mass head).
     radius_weight : float, default=1.0
         Weight of the radius term.
+    mass_weight : float, default=1.0
+        Weight of the mass term.
 
     Returns
     -------
     losses : dict[str, torch.Tensor]
-        ``loss`` (total), ``heat`` and ``radius`` components.
+        ``loss`` (total), ``heat``, ``radius`` and ``mass`` components.
     """
     heat = focal_loss(out["heat"], batch["heat"], batch["weight"])
-    m = batch["reg_mask"]
-    radius = (F.l1_loss(out["radius"].float(), batch["radius"], reduction="none") * m).sum()
-    radius = radius / m.sum().clamp(min=1)
-    return {"loss": heat + radius_weight * radius, "heat": heat, "radius": radius}
+    radius = _masked_l1(out["radius"], batch["radius"], batch["reg_mask"])
+    loss = heat + radius_weight * radius
+    mass = torch.zeros_like(heat)
+    if "logm" in out:
+        mass = _masked_l1(out["logm"], batch["logm"], batch["mass_mask"])
+        loss = loss + mass_weight * mass
+    return {"loss": loss, "heat": heat, "radius": radius, "mass": mass}
 
 
 @torch.no_grad()
@@ -271,7 +306,8 @@ def decode(
     Returns
     -------
     dets : list[dict[str, torch.Tensor]]
-        Per image: ``x``, ``y`` (0-based pixels), ``score`` and ``radius`` (pixels).
+        Per image: ``x``, ``y`` (0-based pixels), ``score``, ``radius`` (pixels)
+        and, with a mass head, ``m200m`` (Msun).
     """
     p = torch.sigmoid(out["heat"].float())
     peaks = (p == F.max_pool2d(p, 3, stride=1, padding=1)) & (p >= threshold)
@@ -282,18 +318,20 @@ def decode(
     dx = (pn * k.repeat(3).view(1, 9, 1, 1)).sum(1, keepdim=True) / norm
     dy = (pn * k.repeat_interleave(3).view(1, 9, 1, 1)).sum(1, keepdim=True) / norm
     radius = out["radius"].float().exp()
+    mass = 1e14 * 10 ** out["logm"].float() if "logm" in out else None
     dets = []
     for b in range(p.shape[0]):
         iy, ix = torch.nonzero(peaks[b, 0], as_tuple=True)
         score = p[b, 0, iy, ix]
         order = torch.argsort(score, descending=True)[:max_det]
         iy, ix = iy[order], ix[order]
-        dets.append(
-            {
-                "x": ix.float() + dx[b, 0, iy, ix],
-                "y": iy.float() + dy[b, 0, iy, ix],
-                "score": score[order],
-                "radius": radius[b, 0, iy, ix],
-            }
-        )
+        det = {
+            "x": ix.float() + dx[b, 0, iy, ix],
+            "y": iy.float() + dy[b, 0, iy, ix],
+            "score": score[order],
+            "radius": radius[b, 0, iy, ix],
+        }
+        if mass is not None:
+            det["m200m"] = mass[b, 0, iy, ix]
+        dets.append(det)
     return dets

@@ -82,3 +82,24 @@ def test_losses_finite_without_positives():
     batch = {"heat": heat, "radius": heat, "reg_mask": heat, "weight": torch.ones_like(heat)}
     losses = detection_loss({"heat": logits, "radius": logits}, batch)
     assert torch.isfinite(losses["loss"]) and losses["radius"] == 0
+
+
+def test_mass_targets_cover_subthreshold_halos():
+    rows = {
+        "x": np.array([20.0, 60.0]),
+        "y": np.array([20.0, 60.0]),
+        "theta500c": np.array([2.0, 2.0]),
+        "m200m": np.array([5e14, 1.5e14]),
+    }
+    maps = tile_training_maps(rows, (100, 100), 0.5, MaskConfig())
+    assert maps["mass_mask"].sum() == 2
+    assert maps["logm"][20, 20] == pytest.approx(np.log10(5.0))
+    assert maps["logm"][60, 60] == pytest.approx(np.log10(1.5))
+
+
+def test_mass_head_outputs_and_decodes():
+    model = ClusterNet(ModelConfig(dims=(8, 16), depths=(1, 1), mass_head=True)).eval()
+    out = model(torch.randn(1, 3, 32, 32))
+    assert out["logm"].shape == (1, 1, 32, 32)
+    det = decode(out, threshold=0.0, max_det=3)[0]
+    assert det["m200m"].shape == det["score"].shape
