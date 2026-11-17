@@ -84,7 +84,10 @@ scored with the same code on the legacy test tiles (18,723 tiles centred on the 
 <div class="scroll">{{table:metrics_legacy}}</div>
 {{fig:pc_legacy}}
 {{fig:completeness_legacy}}
-<p>{{text:old_metric}}</p>
+<p><b>Did the old metric code mislead?</b> Hardly, on this data. Running the pre-refactor purity/completeness code
+verbatim on the same legacy detections (5,000 legacy test tiles, score ≥ 0.5) gives P = 0.908, C = 0.961, against P = 0.906, C = 0.961 from the
+new scoring. The duplicate-counting and cos δ bugs are real, but most of the clusters here are well separated, so they hardly change the numbers.
+The large effect in the old evaluation was the sky-overlapping train/test split (E1), not the matching code.</p>
 
 <h2>4. Data problems found</h2>
 <h3>4.1 Frequency channels misaligned by one pixel</h3>
@@ -116,7 +119,7 @@ All are fixed in the refactor or by the new pipeline unless noted.</p>
 <tr><td>D1</td><td>stamping_utils.make_stamp</td><td>f150/f220 cut with CAR thumbnails (only f090 used <code>proj="tan"</code>), so they sit 1 px off the f090 grid/WCS in all training data.</td><td class="sev-h">high</td><td class="fixed">fixed (make_tiles); realign script for existing tiles</td></tr>
 <tr><td>D2</td><td>WebSky f150 map on disk</td><td>Built with the 90 GHz CIB map; CIB ~5.7× too faint at 150 GHz.</td><td class="sev-h">high</td><td>map must be regenerated (code fixed)</td></tr>
 <tr><td>E1</td><td>script-train / script-evaluate</td><td>Train/test split by catalogue index, i.e. by <i>mass</i> (test = lowest-mass 10% of centre halos), and 1° tiles centred on every halo overlap heavily, so test sky is in the training set.</td><td class="sev-h">high</td><td class="fixed">spatial HEALPix split</td></tr>
-<tr><td>E2</td><td>utils/evaluate.get_real_clusters</td><td><code>continue</code> where <code>break</code> was meant: every (pred, truth) pair within 2′ is counted, so duplicates inflate both purity and completeness (completeness can exceed 1).</td><td class="sev-h">high</td><td class="fixed">one-to-one matching</td></tr>
+<tr><td>E2</td><td>utils/evaluate.get_real_clusters</td><td><code>continue</code> where <code>break</code> was meant: every (pred, truth) pair within 2′ is counted, so duplicates can inflate purity and completeness (completeness can even exceed 1). On the legacy model's detections this turned out to matter little (4 duplicate matches in 32k; see §3.2).</td><td class="sev-m">medium</td><td class="fixed">one-to-one matching</td></tr>
 <tr><td>E3</td><td>utils/evaluate (check_cat, get_real_clusters)</td><td>Separations are Euclidean in (RA, Dec) degrees: no cos δ (RA offsets under-weighted 2× at δ = −60°) and no RA wrap at 0/360.</td><td class="sev-m">medium</td><td class="fixed">KD-tree on unit vectors</td></tr>
 <tr><td>E4</td><td>utils/evaluate</td><td>Truth positions from mask bounding-box centres (biased for edge-truncated masks); truths reduced at 1′ but predictions at 3′; <code>reduce_cat</code> is O(N²) and crashes when nothing is detected.</td><td class="sev-m">medium</td><td class="fixed">catalogue positions, consistent NMS</td></tr>
 <tr><td>M1</td><td>halo-masks.ipynb</td><td><code>M/h</code> instead of <code>M·h</code> to get Msun/h; <code>R·h</code> instead of <code>R/h</code> back to Mpc; physical radius divided by <i>comoving</i> distance; fixed c = 7.</td><td class="sev-h">high</td><td class="fixed">mlclusters.halos</td></tr>

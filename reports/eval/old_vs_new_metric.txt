@@ -1,0 +1,2 @@
+OLD metric: n_pred=35920 n_true=33932 n_real=32615 purity=0.908 completeness=0.961 (unique truths matched: 32611)
+NEW metric @0.5: n_pred=33408 n_true=31022 purity=0.906 completeness=0.961
