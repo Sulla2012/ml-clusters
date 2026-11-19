@@ -107,6 +107,27 @@ The large effect in the old evaluation was the sky-overlapping train/test split 
 </ul>
 {{fig:completeness_noise}}
 {{fig:pc_noise}}
+<h3>4.1 Against the ACT DR5 cluster catalogue</h3>
+<p>F1 against every halo above M200m = 2×10<sup>14</sup> is a harsh target: no method finds clusters down to that mass in ACT-depth data. The state of the art, the ACT DR5 SZ catalogue (<a href="https://arxiv.org/abs/2009.11043">Hilton et al. 2021</a>), is 90% complete for M500c &gt; 3.8×10<sup>14</sup> M☉ at z = 0.5, for SNR<sub>2.4</sub> &gt; 5. At that cut, signal-free simulations give a false-detection fraction of ~3% (75 false over 13,211 deg², i.e. 0.0057 deg<sup>−2</sup>). <code>scripts/compare_act.py</code> puts our test results on the same footing:</p>
+<ul>
+<li><b>Completeness against true M500c</b> (from the WebSky catalogue), for 0.3 &lt; z &lt; 0.7.</li>
+<li><b>Purity counting any matched M200m &gt; 10<sup>14</sup> halo as real.</b> A real survey's optical follow-up would confirm those.</li>
+<li><b>False detections per deg²</b> over the union of the test tiles (1,804 deg²). The 1° test tiles, centred on every massive halo, cover roughly 90% of the test regions, so this is close to a blind search.</li>
+</ul>
+<table>
+<tr><th>model on beam + noise test tiles</th><th>operating point</th><th>threshold</th><th>purity</th><th>false / deg²</th><th>M<sub>90</sub> (true M500c, 0.3&lt;z&lt;0.7)</th><th>completeness M500c &gt; 3.8e14</th></tr>
+<tr><td>n2 (beam + noise)</td><td>purity ≥ 0.97 (ACT SNR &gt; 5 fraction)</td><td>0.58</td><td>0.970</td><td>0.034</td><td><b>3.5×10<sup>14</sup></b></td><td>0.991</td></tr>
+<tr><td>n2 (beam + noise)</td><td>false rate ≤ ACT SNR &gt; 5 (0.0057 deg<sup>−2</sup>)</td><td>0.70</td><td>0.993</td><td>0.006</td><td><b>3.7×10<sup>14</sup></b></td><td>0.981</td></tr>
+<tr><td>n3 (v3 fine-tuned)</td><td>purity ≥ 0.97</td><td>0.55</td><td>0.972</td><td>0.031</td><td>3.4×10<sup>14</sup></td><td>0.991</td></tr>
+<tr><td>v3 (clean-trained)</td><td>never reaches 0.97; best is t = 0.99</td><td>0.99</td><td>0.134</td><td>1.9</td><td>never 90%</td><td>0.126</td></tr>
+</table>
+{{fig:act}}
+<p>Measured this way, the model trained on beam + noise is <b>on par with the ACT DR5 matched-filter catalogue</b>: 90% complete at true M500c ≈ 3.5–3.7×10<sup>14</sup> at ACT-like purity, and ≥ 98% complete above 3.8×10<sup>14</sup>. This is not yet a like-for-like win, for three reasons:</p>
+<ul>
+<li>ACT's 3.8×10<sup>14</sup> is on the UPP (X-ray-calibrated) mass scale. Their weak-lensing calibration factor of 0.71 suggests true masses are higher, which would put ACT's limit near 5×10<sup>14</sup> in true mass. That would favour us; the paper's exact convention should be checked.</li>
+<li>Our maps are easier than real ACT data in several ways. They use DR6 depth (median 13.5 μK-arcmin at f150, versus &lt; 30 μK-arcmin for DR5) and add f220. The noise is idealised: one fixed realisation, isotropic, uncorrelated between bands. There are no masks, and no foreground or source mismatch between the simulation and the sky.</li>
+<li>The fair benchmark is a matched filter (e.g. the nemo pipeline) run on these same simulated maps.</li>
+</ul>
 <p><b>Caveats.</b> There is one fixed noise realisation per band, so the model may partly memorise it; drawing fresh noise each epoch would fix that. The noise is uncorrelated between bands and isotropic, with no scan-direction stripes. The maps have no map-maker transfer function and no point-source masking.</p>
 
 <h2>5. Data problems found</h2>

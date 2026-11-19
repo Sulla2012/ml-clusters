@@ -573,6 +573,24 @@ NOISE_MODELS = {
 NOISE_DATA = {"clean": "v3_cibfix", "beam": "v5_beam", "beam + noise": "v5_beam_noise"}
 
 
+def embed_png(path: Path) -> str:
+    """
+    Embed an existing PNG (e.g. from ``compare_act.py``).
+
+    Parameters
+    ----------
+    path : Path
+        PNG file.
+
+    Returns
+    -------
+    tag : str
+        HTML image tag with base64 data.
+    """
+    data = base64.b64encode(Path(path).read_bytes()).decode()
+    return f'<img alt="{Path(path).stem}" src="data:image/png;base64,{data}">'
+
+
 def _pairs(items: list[str]) -> dict[str, Path]:
     """
     Parse ``label=path`` CLI items.
@@ -614,6 +632,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--noise_dir", type=Path, help="Directory with act_noise_f*.npz.")
     p.add_argument("--noise_evals", type=Path, help="Directory of the noise-experiment evals.")
     p.add_argument("--obs_tiles", nargs="*", default=[], help="label=packed_dir per map version.")
+    p.add_argument("--act_png", type=Path, help="Figure from compare_act.py.")
     p.add_argument("--template", type=Path, default=Path("reports/template.html"))
     p.add_argument("--out", type=Path, default=Path("reports/report.html"))
     p.add_argument("--debug", action="store_true", help="Only make the cheap figures.")
@@ -661,6 +680,8 @@ def main() -> None:
                 "table:metrics_legacy": lambda: metrics_table(legacy),
             }
         )
+    if args.act_png:
+        parts["fig:act"] = lambda: embed_png(args.act_png)
     if args.noise_dir:
         parts["fig:noise"] = lambda: _embed(fig_noise(args.noise_dir), fig_dir, "noise")
     if args.obs_tiles:

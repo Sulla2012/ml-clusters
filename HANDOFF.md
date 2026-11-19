@@ -75,9 +75,18 @@ Test F1 (rows: trained on; cols: tested on), threshold chosen per pair on val:
 detectability (many 2e14 targets are below the noise), not overfitting. Fine-tuning from v3
 gives the same P–C curve as training from scratch. **Use n2 as the starting point for ACT-like work.**
 
+**Against ACT DR5** (Hilton+21, arXiv:2009.11043: 90% complete for M500c^UPP > 3.8e14 at z = 0.5,
+SNR > 5, ~3% false = 0.0057/deg²), from `scripts/compare_act.py` → `reports/eval/act_comparison.json`:
+n2 at purity 0.97 (any matched M200m > 1e14 halo counts as real; t = 0.58, 0.034 false/deg²) is
+90% complete at true M500c = 3.5e14 for 0.3 < z < 0.7; at ACT's false rate (t = 0.70) it is 3.7e14.
+Roughly on par with the matched filter, but our maps are easier (DR6 depth, f220, idealised noise,
+no masks) and the mass scales differ (UPP vs true). Fair benchmark still to do: nemo on these sims.
+
 ## Open issues / next steps
 
-0. Noise follow-ups: fresh noise per epoch (only one realisation now, model may memorise it);
+0. Run nemo (matched filter) on `maps/observed/` for a like-for-like baseline; consider raising the
+   training positive cut / scoring vs a mass-limited catalogue (F1 vs every 2e14 M200m halo is unfair).
+   Noise follow-ups: fresh noise per epoch (only one realisation now, model may memorise it);
    score against a mass- or S/N-limited catalogue; completeness vs local depth (per-tile depth is in
    `split_act.npz`).
 
