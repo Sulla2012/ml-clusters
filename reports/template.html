@@ -25,10 +25,10 @@
 </head>
 <body>
 <h1>ml-clusters: mass-scaled masks, ClusterNet, and bug audit</h1>
-<p class="sub">Branch <code>refactor-centernet</code> · 2026-11-17 · WebSky simulations, ACT-like f090/f150/f220</p>
+<p class="sub">Branch <code>refactor-centernet</code> · updated 2026-11-19 · WebSky simulations with ACT DR6 beams and noise, f090/f150/f220</p>
 
 <div class="card">
-<b>Summary.</b> {{text:summary}}
+<b>Summary.</b> The cluster masks now scale with θ500c and the training targets ignore halos of 1–2×10<sup>14</sup> M☉. The Faster R-CNN has been replaced by ClusterNet, a 2.6M-parameter ConvNeXt U-Net with CenterNet heads, and evaluation uses a leak-free spatial split with sky-level one-to-one matching. On clean WebSky maps with the corrected f150 CIB, ClusterNet reaches test F1 0.874 (P 0.883, C 0.865), or 0.886 with the mass head (§3). Two data bugs were found and fixed: f150/f220 sat 1 px off f090, and the f150 map used the 90 GHz CIB. <b>New (§4):</b> with the ACT DR6 beam and DR6-like noise added, a model trained on clean maps collapses (F1 0.05). Training on beam + noise maps gives F1 0.49, finds ≥98% of clusters above 6×10<sup>14</sup> M☉, and still scores 0.79 on clean maps. <b>Train on observed-like maps.</b>
 </div>
 
 <h2>1. Mass-scaled cluster masks</h2>
@@ -89,15 +89,35 @@ verbatim on the same legacy detections (5,000 legacy test tiles, score ≥ 0.5) 
 new scoring. The duplicate-counting and cos δ bugs are real, but most of the clusters here are well separated, so they hardly change the numbers.
 The large effect in the old evaluation was the sky-overlapping train/test split (E1), not the matching code.</p>
 
-<h2>4. Data problems found</h2>
-<h3>4.1 Frequency channels misaligned by one pixel</h3>
+<h3>3.3 Ablation: v1 → v4</h3>
+<p>v1 is trained on the original tiles, whose f150/f220 channels are 1 px off (§5.1). v2 is the same model on realigned tiles, and the gain (F1 0.921 → 0.931) is the alignment fix. v3 uses tiles re-cut from the corrected f150 map, which has ~5.7× more CIB at 150 GHz (§5.2–5.3). F1 drops to 0.874 because the corrected map is harder: the earlier numbers were optimistic. <b>v3 is the honest clean-map baseline.</b> v4 adds a log-mass head trained on every halo above 10<sup>14</sup>, which slightly helps detection (F1 0.886) and recovers M200m with a robust scatter of 0.03 dex (bias −0.01 dex) on these noise-free maps:</p>
+{{fig:mass}}
+
+<h2>4. Beam and noise: train on clean or on observed maps?</h2>
+<p><b>Observed maps.</b> Each clean WebSky band is convolved with the ACT DR6 coadd beam (<code>beam_f*_tform.txt</code>, spherical harmonics up to ℓ = 21600; f090/f150/f220 FWHM ≈ 2.5/1.6/1.1′) and given one realisation of DR6-like noise: white noise from the DR6 daynight temperature ivar, plus an atmospheric component scaled to the local depth. The spectrum of the atmospheric component is <i>measured</i>, relative to white, from DR6 daynight − night source-free difference maps in 7–8 patches of 10°. The noise is zero outside the DR6 footprint (48.8% of the sky), and only tiles fully inside it are used here: 73,561 train, 6,044 val and 8,160 test tiles from the same HEALPix split. Median tile depth is 13.7/13.5/68 μK-arcmin. Code: <code>mlclusters/instrument.py</code>, <code>scripts/fit_act_noise.py</code>, <code>scripts/make_observed_maps.py</code>, <code>scripts/footprint_split.py</code>; the whole pipeline is <code>scripts/run_noise_experiment.sh</code>.</p>
+{{fig:noise}}
+{{fig:observed}}
+<p><b>Experiment.</b> Five models, each scored on the test tiles of all three map versions. Training uses the same settings as v3: 20 epochs for n0–n2, and 8 epochs at lr 5e-4 for the fine-tune n3. n0 trains on clean maps over the same footprint tiles as n1–n3, so the comparison has equal sky area. Each cell gives test F1 (purity / completeness), with the threshold chosen on that data's validation tiles.</p>
+<div class="scroll">{{table:noise}}</div>
+<ul>
+<li><b>Clean-trained models do not transfer.</b> v3 drops to F1 0.57 with the beam alone and to 0.05 with noise. On noisy maps it misses most clusters, even above 10<sup>15</sup> M☉. The beam-only model is just as brittle in reverse (0.31 on clean maps). On noisy maps v3 and n1 fire on noise peaks everywhere: their purity stays at 2–4% at every threshold (P–C curve below), so no choice of threshold can rescue them.</li>
+<li><b>Training on beam + noise is best on noisy data and the most robust overall.</b> n2 nearly ties the beam-only model on beam maps (0.848 vs 0.852) and still scores 0.79 on clean maps.</li>
+<li><b>The noisy F1 of ~0.49 is a detectability limit, not a training problem.</b> Train and val loss are equal (1.98), so there is no overfitting, and n2's validation F1 levels off at ~0.48 after four epochs (training curves in §3). n2 finds 98–99% of clusters above 6×10<sup>14</sup> and 83% at 4–6×10<sup>14</sup>, but only 27% at 2–3×10<sup>14</sup>, which make up most of the target catalogue and are often below the noise. Scoring against a mass or S/N-limited catalogue would be the fairer test.</li>
+<li><b>Pretraining on clean maps barely helps.</b> n3 (v3 fine-tuned) gains a little completeness at low mass but loses purity, and its purity–completeness curve lies right on top of n2's (trained from scratch). The small differences in the table only reflect which threshold was chosen.</li>
+</ul>
+{{fig:completeness_noise}}
+{{fig:pc_noise}}
+<p><b>Caveats.</b> There is one fixed noise realisation per band, so the model may partly memorise it; drawing fresh noise each epoch would fix that. The noise is uncorrelated between bands and isotropic, with no scan-direction stripes. The maps have no map-maker transfer function and no point-source masking.</p>
+
+<h2>5. Data problems found</h2>
+<h3>5.1 Frequency channels misaligned by one pixel</h3>
 <p>In every existing tile, the f150 and f220 channels sit 1 px (0.5′) higher in Dec than f090 and the stored WCS. <code>make_stamp</code> passed
 <code>proj="tan"</code> only for the first frequency; pixell's default for the others is a CAR thumbnail with a different reference pixel.
 I confirmed this by re-cutting tiles at the same centres with the new <code>make_tiles</code>: after a +1-row shift of f150/f220, old and new tiles agree to 0.8% / 4.5% rms
 (versus 12% / 68% without the shift). <code>scripts/realign_channels.py</code> writes a corrected copy.</p>
 {{fig:alignment}}
 
-<h3>4.2 Wrong CIB in the WebSky f150 map; swapped constants in the map maker</h3>
+<h3>5.2 Wrong CIB in the WebSky f150 map; swapped constants in the map maker</h3>
 <p>Regressing each map on the component templates (CMB synthesised from <code>lensed_alm.fits</code> in a 4°×4° patch, coefficient 1.000):</p>
 <table>
 <tr><th>map</th><th>best-fitting CIB template</th><th>fitted factor [μK per MJy/sr]</th><th>correct factor</th></tr>
@@ -106,18 +126,18 @@ I confirmed this by re-cutting tiles at the same centres with the new <code>make
 <tr><td>websky_f220</td><td>cib_217</td><td>2.07e3</td><td>2.07e3</td></tr>
 </table>
 <p>So the f150 map on disk uses the <b>90 GHz CIB map</b>, which makes its CIB ~5.7× too faint. The current <code>webskymaker.py</code> has a different bug: its 90/150 CIB factors are
-swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code> fixes both, plus the broken noise path (items S1–S2). The regenerated f150 map is validated in §4.3.</p>
+swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code> fixes both, plus the broken noise path (items S1–S2). The regenerated f150 map is validated in §5.3.</p>
 
-<h3>4.3 Regenerated f150 map</h3>
-<p>{{text:f150}}</p>
+<h3>5.3 Regenerated f150 map</h3>
+<p>The map was rebuilt with <code>scripts/make_websky_map.py 150</code> (5 min, 23 GB RAM) and written to <code>/mnt/welch/USERS/jorlo/ml-clusters/maps/websky_f150_map_cibfix.fits</code>; the original in the shared WebSky directory is untouched. In three 4°×4° test patches the difference new − old equals 2594.7 × (cib_153 − cib_90.2) with a 0.000 μK residual, i.e. the CIB term is the only change, and repeating the template regression on the new map now selects cib_153 (factor 2.58e3). The change is ~22 μK rms per pixel, dominated by bright dusty sources. All 186,784 tiles were re-cut from the corrected maps at the original centres with the fixed <code>make_tiles</code> (TAN projection for every channel, so no realignment is needed) into <code>packed_v3_cibfix</code>; models v3 and v4 below are trained on these.</p>
 
-<h2>5. Bug audit (pre-refactor code)</h2>
+<h2>6. Bug audit (pre-refactor code)</h2>
 <p>Severity: <span class="sev-h">high</span> = changes results; <span class="sev-m">medium</span> = wrong in some cases or crashes a code path; <span class="sev-l">low</span> = latent or cosmetic.
 All are fixed in the refactor or by the new pipeline unless noted.</p>
 <div class="scroll"><table>
 <tr><th>#</th><th>where</th><th>problem</th><th>sev.</th><th>status</th></tr>
 <tr><td>D1</td><td>stamping_utils.make_stamp</td><td>f150/f220 cut with CAR thumbnails (only f090 used <code>proj="tan"</code>), so they sit 1 px off the f090 grid/WCS in all training data.</td><td class="sev-h">high</td><td class="fixed">fixed (make_tiles); realign script for existing tiles</td></tr>
-<tr><td>D2</td><td>WebSky f150 map on disk</td><td>Built with the 90 GHz CIB map; CIB ~5.7× too faint at 150 GHz.</td><td class="sev-h">high</td><td>map must be regenerated (code fixed)</td></tr>
+<tr><td>D2</td><td>WebSky f150 map on disk</td><td>Built with the 90 GHz CIB map; CIB ~5.7× too faint at 150 GHz.</td><td class="sev-h">high</td><td class="fixed">fixed: map regenerated (§5.3)</td></tr>
 <tr><td>E1</td><td>script-train / script-evaluate</td><td>Train/test split by catalogue index, i.e. by <i>mass</i> (test = lowest-mass 10% of centre halos), and 1° tiles centred on every halo overlap heavily, so test sky is in the training set.</td><td class="sev-h">high</td><td class="fixed">spatial HEALPix split</td></tr>
 <tr><td>E2</td><td>utils/evaluate.get_real_clusters</td><td><code>continue</code> where <code>break</code> was meant: every (pred, truth) pair within 2′ is counted, so duplicates can inflate purity and completeness (completeness can even exceed 1). On the legacy model's detections this turned out to matter little (4 duplicate matches in 32k; see §3.2).</td><td class="sev-m">medium</td><td class="fixed">one-to-one matching</td></tr>
 <tr><td>E3</td><td>utils/evaluate (check_cat, get_real_clusters)</td><td>Separations are Euclidean in (RA, Dec) degrees: no cos δ (RA offsets under-weighted 2× at δ = −60°) and no RA wrap at 0/360.</td><td class="sev-m">medium</td><td class="fixed">KD-tree on unit vectors</td></tr>
@@ -138,11 +158,11 @@ All are fixed in the refactor or by the new pipeline unless noted.</p>
 <tr><td>X1</td><td>~/venvs/general</td><td>The venv's <code>python</code> resolves to the system interpreter, so its site-packages are never on <code>sys.path</code>.</td><td class="sev-l">low</td><td>not changed (user env)</td></tr>
 </table></div>
 
-<h2>6. Caveats and next steps</h2>
+<h2>7. Caveats and next steps</h2>
 <ul>
-<li>The WebSky maps have <b>no beam and no noise</b>, so absolute purity/completeness here are far higher than achievable on ACT data. Add per-band beams
-and realistic noise (ideally ACT DR6 inverse-variance maps) before applying to real maps.</li>
-<li>Regenerate the f150 map with the CIB fix and re-cut the tiles with <code>make_tiles.py</code> (aligned, centred 121×121 tiles).</li>
+<li>§1–3 numbers are for clean maps and are far above what is achievable on ACT data; §4 is the realistic setting.</li>
+<li>Draw fresh noise realisations on the fly each epoch, and add noise correlated between bands, scan-direction anisotropy, the map-maker transfer function and point-source masking.</li>
+<li>Evaluate against a mass- or S/N-limited catalogue, and report completeness against local depth (per-tile depths are in <code>split_act.npz</code>).</li>
 <li>Natural extensions: a log M500c regression head, a mass/SNR-dependent positive cut, and inference on large maps rather than per-cluster tiles.</li>
 </ul>
 </body>

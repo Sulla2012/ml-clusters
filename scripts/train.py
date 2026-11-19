@@ -53,6 +53,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--no_compile", action="store_true", help="Disable torch.compile.")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--split", default="split.npz", help="Split file in the tile directory.")
+    p.add_argument("--init", type=Path, help="Start from this checkpoint's weights (fine-tuning).")
     p.add_argument("--debug", action="store_true", help="Tiny run: 2 epochs, few batches.")
     return p
 
@@ -100,7 +101,12 @@ def main() -> None:
         depths=tuple(args.depths),
         mass_head=args.mass_head,
     )
-    model = ClusterNet(mcfg).to(device).to(memory_format=torch.channels_last)
+    model = ClusterNet(mcfg)
+    if args.init is not None:
+        ck = torch.load(args.init, map_location="cpu", weights_only=False)
+        model.load_state_dict(ck["state_dict"])
+        print(f"initialised from {args.init}")
+    model = model.to(device).to(memory_format=torch.channels_last)
     net = model if args.no_compile or device.type != "cuda" else torch.compile(model)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     steps = len(train_dl) if max_steps is None else max_steps

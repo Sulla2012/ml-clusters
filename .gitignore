@@ -26,3 +26,4 @@ figs/
 *.egg-info/
 .pytest_cache/
 reports/figs/
+reports/eval/**/*.npz

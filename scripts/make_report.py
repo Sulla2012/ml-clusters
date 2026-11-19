@@ -317,6 +317,39 @@ def fig_radius(pre: Path, pix_arcmin: float, cfg: MaskConfig) -> plt.Figure:
     return fig
 
 
+def fig_mass(pre: Path) -> plt.Figure:
+    """
+    Predicted versus true M200m for matched detections of a model with a mass head.
+
+    Parameters
+    ----------
+    pre : Path
+        Evaluation prefix of a ClusterNet model trained with ``--mass_head``.
+
+    Returns
+    -------
+    fig : plt.Figure
+        Figure.
+    """
+    d = np.load(pre.with_suffix(".npz"))
+    m = (d["det_match"] >= 0) & (d["det_score"] >= d["threshold"])
+    true = np.log10(d["truth_m200m"][d["det_match"][m]] / 1e14)
+    pred = np.log10(d["det_m200m"][m] / 1e14)
+    fig, ax = plt.subplots(figsize=(5, 4.5))
+    ax.hexbin(true, pred, gridsize=40, bins="log", cmap="Blues", extent=(0.25, 1.4, 0, 1.4))
+    ax.plot([0.25, 1.4], [0.25, 1.4], "k--", lw=0.8)
+    res = pred - true
+    bias = np.median(res)
+    sigma = 1.4826 * np.median(np.abs(res - bias))
+    ax.set(
+        xlabel=r"true $\log_{10}(M_{200m}/10^{14})$",
+        ylabel=r"predicted $\log_{10}(M_{200m}/10^{14})$",
+        title=f"bias {bias:+.3f} dex, robust σ = {sigma:.3f} dex",
+    )
+    fig.tight_layout()
+    return fig
+
+
 def fig_examples(tiles: PackedTiles, ckpt: Path, split: np.ndarray) -> plt.Figure:
     """
     Example test tiles with truth (green) and detections (orange) drawn at their radii.
@@ -402,6 +435,144 @@ def metrics_table(evals: dict[str, Path]) -> str:
     return f"<table>{head}{''.join(rows)}</table>"
 
 
+def fig_observed(tiles: dict[str, PackedTiles]) -> plt.Figure:
+    """
+    One ACT-footprint test tile around a massive cluster, per band and map version.
+
+    Parameters
+    ----------
+    tiles : dict[str, PackedTiles]
+        Map version label (clean, beam, beam + noise) to packed tiles with the same centres.
+
+    Returns
+    -------
+    fig : plt.Figure
+        Figure.
+    """
+    first = next(iter(tiles.values()))
+    split = np.load(first.root / "split_act.npz")
+    tg = first.targets
+    for i in np.where(split["split"] == 2)[0]:
+        r = tg.tile(i)
+        near = (np.abs(r["x"] - 60) < 4) & (np.abs(r["y"] - 60) < 4) & (r["m200m"] > 6e14)
+        if near.any() and split["depth"][i, 1] < 15:
+            break
+    fig, axs = plt.subplots(3, len(tiles), figsize=(3.3 * len(tiles), 9.8))
+    for c, (label, t) in enumerate(tiles.items()):
+        for b, band in enumerate(["f090", "f150", "f220"]):
+            img = np.asarray(t.images[i, b])
+            lim = 400 if b == 2 else 250
+            img = img - np.median(img)
+            axs[b, c].imshow(img, origin="lower", cmap="RdBu_r", vmin=-lim, vmax=lim)
+            axs[b, c].set(xticks=[], yticks=[], title=f"{band} {label}")
+    m, z = r["m200m"][near][0], r["z"][near][0]
+    fig.suptitle(
+        f"test tile {first.tile_id[i]}: M200m = {m:.1e} Msun at centre, z = {z:.2f}; "
+        f"f150 depth {split['depth'][i, 1]:.0f} uK-arcmin (colour ±250 uK, ±400 at f220)"
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return fig
+
+
+def fig_noise(noise_dir: Path) -> plt.Figure:
+    """
+    Measured DR6 noise power relative to white, and the DR6 beam transforms.
+
+    Parameters
+    ----------
+    noise_dir : Path
+        Directory with ``act_noise_f*.npz`` from ``fit_act_noise.py``.
+
+    Returns
+    -------
+    fig : plt.Figure
+        Figure.
+    """
+    from mlclusters.instrument import act_files, beam_fwhm_arcmin, load_beam
+
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4))
+    ell = np.arange(1, 20001)
+    for k, band in enumerate(["090", "150", "220"]):
+        d = np.load(noise_dir / f"act_noise_f{band}.npz")
+        rel = d["diff"] / d["white_scale"]
+        axs[0].plot(d["ell"], rel, "o", ms=3, color=COLORS[k])
+        model = 1 + (ell / d["ell_knee"]) ** d["alpha"]
+        axs[0].plot(ell, model, "--", lw=0.8, color=COLORS[k])
+        axs[0].plot(
+            [],
+            [],
+            "o-",
+            color=COLORS[k],
+            label=f"f{band}: ℓ_knee {d['ell_knee']:.0f}, "
+            f"α {d['alpha']:.1f}, depth {d['depth']:.0f} uK′",
+        )
+        bl = load_beam(act_files(band, "beam"), 30000)
+        fwhm = beam_fwhm_arcmin(bl)
+        axs[1].plot(np.arange(len(bl)), bl, color=COLORS[k], label=f"f{band} (≈{fwhm:.2f}′ FWHM)")
+    axs[0].axhline(1, color="k", lw=0.5)
+    axs[0].set(
+        xscale="log",
+        yscale="log",
+        xlabel="ℓ",
+        ylabel="noise power / white level",
+        title="DR6 daynight−night (dots), power-law fit (dashed)",
+        xlim=(80, 25000),
+        ylim=(0.5, 3e4),
+    )
+    axs[1].set(xscale="log", xlim=(100, 30000), xlabel="ℓ", ylabel="B_ℓ", title="DR6 beams")
+    axs[0].legend(fontsize=8)
+    axs[1].legend(fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def noise_table(eval_dir: Path, models: dict[str, str], data: dict[str, str]) -> str:
+    """
+    HTML train x test matrix of test F1 (purity / completeness) at the val-chosen threshold.
+
+    Parameters
+    ----------
+    eval_dir : Path
+        Directory with ``<model>_on_<data>.json``.
+    models : dict[str, str]
+        Row label to model key.
+    data : dict[str, str]
+        Column label to data key.
+
+    Returns
+    -------
+    html : str
+        Table markup; the best F1 per column is bold.
+    """
+    f1 = {}
+    for m in models.values():
+        for x in data.values():
+            f1[m, x] = json.loads((eval_dir / f"{m}_on_{x}.json").read_text())["chosen"]["test"]
+    best = {x: max(f1[m, x]["f1"] for m in models.values()) for x in data.values()}
+    head = "<tr><th>trained on ↓ / tested on →</th>" + "".join(f"<th>{c}</th>" for c in data)
+    rows = []
+    for label, m in models.items():
+        cells = []
+        for x in data.values():
+            c = f1[m, x]
+            v = f"{c['f1']:.3f}"
+            v = f"<b>{v}</b>" if c["f1"] == best[x] else v
+            pc = f"({c['purity']:.2f} / {c['completeness']:.2f})"
+            cells.append(f"<td>{v} <small>{pc}</small></td>")
+        rows.append(f"<tr><td>{label}</td>{''.join(cells)}</tr>")
+    return f"<table>{head}</tr>{''.join(rows)}</table>"
+
+
+NOISE_MODELS = {
+    "v3: clean, all sky": "v3-cibfix",
+    "n0: clean, ACT footprint": "n0-clean-fp",
+    "n1: beam": "n1-beam",
+    "n2: beam + noise": "n2-obs",
+    "n3: v3 fine-tuned on beam + noise": "n3-obs-ft",
+}
+NOISE_DATA = {"clean": "v3_cibfix", "beam": "v5_beam", "beam + noise": "v5_beam_noise"}
+
+
 def _pairs(items: list[str]) -> dict[str, Path]:
     """
     Parse ``label=path`` CLI items.
@@ -438,6 +609,11 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--legacy_evals", nargs="*", default=[], help="label=prefix (legacy split)")
     p.add_argument("--example_ckpt", type=Path, help="Checkpoint for example tiles.")
     p.add_argument("--radius_eval", type=Path, help="ClusterNet eval prefix for radius plot.")
+    p.add_argument("--mass_eval", type=Path, help="Mass-head eval prefix for the mass plot.")
+    p.add_argument("--example_tiles", type=Path, help="Tiles for the examples (default --tiles).")
+    p.add_argument("--noise_dir", type=Path, help="Directory with act_noise_f*.npz.")
+    p.add_argument("--noise_evals", type=Path, help="Directory of the noise-experiment evals.")
+    p.add_argument("--obs_tiles", nargs="*", default=[], help="label=packed_dir per map version.")
     p.add_argument("--template", type=Path, default=Path("reports/template.html"))
     p.add_argument("--out", type=Path, default=Path("reports/report.html"))
     p.add_argument("--debug", action="store_true", help="Only make the cheap figures.")
@@ -456,7 +632,8 @@ def main() -> None:
     }
     if not args.debug:
         evals, legacy = _pairs(args.evals), _pairs(args.legacy_evals)
-        split = np.load(args.tiles / "split.npz")["split"]
+        ex_tiles = PackedTiles(args.example_tiles) if args.example_tiles else tiles
+        split = np.load(ex_tiles.root / "split.npz")["split"]
         parts.update(
             {
                 "fig:alignment": lambda: _embed(
@@ -477,10 +654,36 @@ def main() -> None:
                     fig_radius(args.radius_eval, tiles.pix_arcmin, cfg), fig_dir, "radius"
                 ),
                 "fig:examples": lambda: _embed(
-                    fig_examples(tiles, args.example_ckpt, split), fig_dir, "examples"
+                    fig_examples(ex_tiles, args.example_ckpt, split), fig_dir, "examples"
                 ),
+                "fig:mass": lambda: _embed(fig_mass(args.mass_eval), fig_dir, "mass"),
                 "table:metrics": lambda: metrics_table(evals),
                 "table:metrics_legacy": lambda: metrics_table(legacy),
+            }
+        )
+    if args.noise_dir:
+        parts["fig:noise"] = lambda: _embed(fig_noise(args.noise_dir), fig_dir, "noise")
+    if args.obs_tiles:
+        obs = {k: PackedTiles(v) for k, v in _pairs(args.obs_tiles).items()}
+        parts["fig:observed"] = lambda: _embed(fig_observed(obs), fig_dir, "observed")
+    if args.noise_evals and not args.debug:
+        ne = args.noise_evals
+        on_noisy = {k: ne / f"{m}_on_v5_beam_noise" for k, m in NOISE_MODELS.items()}
+        on_noisy.pop("n0: clean, ACT footprint")
+        pairs = {
+            "v3 on clean": ne / "v3-cibfix_on_v3_cibfix",
+            "n2 on beam": ne / "n2-obs_on_v5_beam",
+            "v3 on beam + noise": ne / "v3-cibfix_on_v5_beam_noise",
+            "n2 on beam + noise": ne / "n2-obs_on_v5_beam_noise",
+            "n3 on beam + noise": ne / "n3-obs-ft_on_v5_beam_noise",
+        }
+        parts.update(
+            {
+                "table:noise": lambda: noise_table(ne, NOISE_MODELS, NOISE_DATA),
+                "fig:pc_noise": lambda: _embed(fig_pc(on_noisy), fig_dir, "pc_noise"),
+                "fig:completeness_noise": lambda: _embed(
+                    fig_completeness(pairs), fig_dir, "completeness_noise"
+                ),
             }
         )
     html = args.template.read_text()
