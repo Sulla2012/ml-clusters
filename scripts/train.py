@@ -54,6 +54,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--split", default="split.npz", help="Split file in the tile directory.")
     p.add_argument("--init", type=Path, help="Start from this checkpoint's weights (fine-tuning).")
+    p.add_argument("--channels", type=int, nargs="+", help="Input channels to use (default all).")
     p.add_argument("--debug", action="store_true", help="Tiny run: 2 epochs, few batches.")
     return p
 
@@ -76,7 +77,8 @@ def main() -> None:
 
     rng = np.random.default_rng(args.seed)
     _, scale = robust_stats(tiles.images, rng.choice(train_idx, min(500, len(train_idx)), False))
-    norm = Normalizer(scale)
+    chans = args.channels or list(range(tiles.images.shape[1]))
+    norm = Normalizer(scale[chans], channels=args.channels)
     cfg = MaskConfig(
         args.m_cut, args.m_ignore, args.mask_scale, args.r_min, args.r_max, args.sigma_frac
     )
@@ -96,7 +98,7 @@ def main() -> None:
     val_dl = torch.utils.data.DataLoader(TileDataset(tiles, val_idx, norm, cfg), **loader_kw)
 
     mcfg = ModelConfig(
-        in_chans=tiles.images.shape[1],
+        in_chans=len(chans),
         dims=tuple(args.dims),
         depths=tuple(args.depths),
         mass_head=args.mass_head,

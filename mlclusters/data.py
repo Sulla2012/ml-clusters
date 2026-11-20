@@ -181,12 +181,22 @@ class Normalizer:
         Linear range in units of ``scale``; ``k <= 0`` disables compression.
     subtract_median : bool, default=True
         Remove the per-tile, per-channel median first.
+    channels : list[int] or None, default=None
+        Input channels to keep (e.g. ``[0, 1]`` for f090 + f150), selected before anything else;
+        ``scale`` refers to the kept channels. ``None`` keeps all.
     """
 
-    def __init__(self, scale: np.ndarray, k: float = 3.0, subtract_median: bool = True) -> None:
+    def __init__(
+        self,
+        scale: np.ndarray,
+        k: float = 3.0,
+        subtract_median: bool = True,
+        channels: list[int] | None = None,
+    ) -> None:
         self.scale = np.asarray(scale, np.float32)
         self.k = float(k)
         self.subtract_median = subtract_median
+        self.channels = None if channels is None else [int(c) for c in channels]
 
     @classmethod
     def identity(cls, n_chan: int) -> Normalizer:
@@ -219,6 +229,8 @@ class Normalizer:
         out : np.ndarray
             Normalised ``float32`` image.
         """
+        if self.channels is not None:
+            img = img[self.channels]
         if self.subtract_median:
             img = img - np.median(img, axis=(-2, -1), keepdims=True)
         img = img / self.scale[:, None, None]
@@ -235,7 +247,12 @@ class Normalizer:
         state : dict
             Constructor arguments.
         """
-        return {"scale": self.scale.tolist(), "k": self.k, "subtract_median": self.subtract_median}
+        return {
+            "scale": self.scale.tolist(),
+            "k": self.k,
+            "subtract_median": self.subtract_median,
+            "channels": self.channels,
+        }
 
 
 def dihedral(arrs: list[np.ndarray], k: int) -> list[np.ndarray]:

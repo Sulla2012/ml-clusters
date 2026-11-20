@@ -103,3 +103,17 @@ def test_mass_head_outputs_and_decodes():
     assert out["logm"].shape == (1, 1, 32, 32)
     det = decode(out, threshold=0.0, max_det=3)[0]
     assert det["m200m"].shape == det["score"].shape
+
+
+def test_normalizer_selects_channels() -> None:
+    """``channels`` picks input bands before normalising and survives a state round trip."""
+    from mlclusters.data import Normalizer
+
+    img = np.stack([np.full((4, 4), v, np.float32) for v in (1.0, 2.0, 3.0)])
+    img[:, 0, 0] += 10
+    norm = Normalizer(np.array([1.0, 2.0]), k=0, channels=[0, 2])
+    out = norm(img)
+    assert out.shape == (2, 4, 4) and np.isclose(out[1, 0, 0], 5.0)
+    again = Normalizer(**norm.state())
+    assert again.channels == [0, 2] and np.allclose(again(img), out)
+    assert Normalizer(np.ones(3)).state()["channels"] is None

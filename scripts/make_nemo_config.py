@@ -28,7 +28,7 @@ from pathlib import Path
 import healpy as hp
 import numpy as np
 import yaml
-from astropy.table import Table
+from astropy.table import Table, vstack
 from pixell import enmap
 
 from mlclusters.data import PackedTiles
@@ -105,19 +105,19 @@ def depth_cut(hit: np.ndarray, frac: float, obs: Path) -> np.ndarray:
     return out
 
 
-def source_holes(cat: Path, flux_cut: float, out: Path) -> Table:
+def source_holes(cats: list[Path], flux_cuts: list[float], out: Path) -> Table:
     """
-    DR5-style point-source mask catalogue: every source above ``flux_cut``, with a hole radius.
+    DR5-style point-source mask catalogue: every source above its flux cut, with a hole radius.
 
     The radius is 320" at the flux cut, growing as flux^(1/4) to at most 12' (DR5 masked all
-    > 10 mJy sources with 320" circles after an initial 3-12' amplitude-dependent pass).
+    > 10 mJy sources at 150 GHz with 320" circles after an initial 3-12' amplitude-dependent pass).
 
     Parameters
     ----------
-    cat : Path
-        nemo point-source catalogue (``fluxJy`` column), e.g. from ``--mode ptsrc``.
-    flux_cut : float
-        Minimum 150 GHz flux density [Jy].
+    cats : list[Path]
+        nemo point-source catalogues (``fluxJy`` column), e.g. from ``--mode ptsrc``.
+    flux_cuts : list[float]
+        Minimum flux density per catalogue [Jy] (one value applies to all).
     out : Path
         Where to write the masking catalogue (``RADeg``, ``decDeg``, ``fluxJy``, ``rArcmin``).
 
@@ -126,11 +126,15 @@ def source_holes(cat: Path, flux_cut: float, out: Path) -> Table:
     tab : Table
         The masking catalogue.
     """
-    t = Table.read(cat)
-    t = t[np.asarray(t["fluxJy"]) > flux_cut]["RADeg", "decDeg", "fluxJy"]
-    t["rArcmin"] = np.clip(320 / 60 * (np.asarray(t["fluxJy"]) / flux_cut) ** 0.25, 320 / 60, 12)
+    tabs = []
+    for cat, cut in zip(cats, np.broadcast_to(flux_cuts, len(cats)), strict=True):
+        t = Table.read(cat)
+        t = t[np.asarray(t["fluxJy"]) > cut]["RADeg", "decDeg", "fluxJy"]
+        t["rArcmin"] = np.clip(320 / 60 * (np.asarray(t["fluxJy"]) / cut) ** 0.25, 320 / 60, 12)
+        print(f"{cat.name}: {len(t)} sources > {cut * 1e3:.0f} mJy, max {t['fluxJy'].max():.2f} Jy")
+        tabs.append(t)
+    t = vstack(tabs)
     t.write(out, overwrite=True)
-    print(f"{len(t)} sources > {flux_cut * 1e3:.0f} mJy, max {t['fluxJy'].max():.2f} Jy")
     return t
 
 
@@ -195,7 +199,13 @@ def tile_boxes(hit: np.ndarray, width: float = 10.0, height: float = 5.0) -> lis
 
 
 def config(
-    mode: str, mask: str, tiles: list[dict], debug: bool, holes: str | None, obs: Path
+    mode: str,
+    mask: str,
+    tiles: list[dict],
+    debug: bool,
+    holes: str | None,
+    obs: Path,
+    bands: list[str] | None = None,
 ) -> dict:
     """
     Nemo configuration, adapted to the simulated maps.
@@ -214,13 +224,18 @@ def config(
         Point-source masking catalogue (``dr5``).
     obs : Path
         Directory with the observed maps and ivars.
+    bands : list[str] or None
+        Bands to use (default: ``dr6`` all three, ``dr5`` 090 + 150, ``ptsrc`` 150).
 
     Returns
     -------
     cfg : dict
         Config for ``yaml.safe_dump``.
     """
-    bands = {"dr6": ("090", "150", "220"), "dr5": ("090", "150"), "ptsrc": ("150",)}[mode]
+    default = {"dr6": ("090", "150", "220"), "dr5": ("090", "150"), "ptsrc": ("150",)}[mode]
+    bands = tuple(bands or default)
+    if mode == "ptsrc" and len(bands) != 1:
+        raise ValueError("--mode ptsrc takes one band")
     maps = [
         {
             "mapFileName": str(obs / f"websky_f{b}_beam_noise.fits"),
@@ -254,7 +269,7 @@ def config(
             "ringThresholdSigma": 3,
             "mapFilters": [
                 {
-                    "label": "Beam150",
+                    "label": f"Beam{bands[0]}",
                     "class": "BeamMatchedFilter",
                     "params": beam | quiet | {"outputUnits": "uK", "edgeTrimArcmin": 0.0},
                 }
@@ -374,8 +389,11 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--edge", type=float, default=2.0, help="Tile edge margin [pix].")
     p.add_argument("--obs", type=Path, default=OBS, help="Observed-map directory.")
     p.add_argument("--mode", choices=("dr6", "dr5", "ptsrc"), default="dr5")
-    p.add_argument("--ptsrc_cat", type=Path, help="Point-source catalogue for --mode dr5.")
-    p.add_argument("--flux_cut", type=float, default=0.01, help="Source mask flux cut [Jy].")
+    p.add_argument("--bands", nargs="+", help="Bands (default per mode, see config()).")
+    p.add_argument("--ptsrc_cat", type=Path, nargs="+", help="Source catalogues for --mode dr5.")
+    p.add_argument(
+        "--flux_cut", type=float, nargs="+", default=[0.01], help="Mask flux cut(s) [Jy]."
+    )
     p.add_argument("--min_ivar_frac", type=float, default=0.1, help="Depth cut (0 = none).")
     p.add_argument("--debug", action="store_true", help="~6 deg patch, two Arnaud filters.")
     return p
@@ -409,7 +427,7 @@ def main() -> None:
     mask = car_mask(hit, shape, wcs)
     mfile = f"surveyMask_{name}.fits"
     enmap.write_map(str(args.out_dir / mfile), enmap.enmap(mask, wcs))
-    cfg = config(args.mode, mfile, boxes, args.debug, holes, args.obs)
+    cfg = config(args.mode, mfile, boxes, args.debug, holes, args.obs, args.bands)
     print(f"{len(cfg['tileDefinitions'])} nemo tiles")
     (args.out_dir / f"{name}.yml").write_text(yaml.safe_dump(cfg, sort_keys=False))
     print(f"wrote {args.out_dir / mfile} and {name}.yml")

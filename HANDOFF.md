@@ -108,6 +108,14 @@ spurious detections along our ragged test-tile-union boundary, gone after a 12�
 ClusterNet is more complete below 3.5e14 (0.47 vs 0.34 at 2.9e14). Retraining on fixed maps:
 no change (test F1 0.489 vs 0.488 on v6 tiles). **Use `clusternet-n2v6-obs`.**
 
+**Band test (2026-11-20, `reports/eval/sky_v6/bands_erode12/`):** ClusterNet on f090+f150 only
+(`train.py --channels 0 1` → `clusternet-n2v6-2ch`; channels are stored in the checkpoint's
+normaliser) vs nemo with f220 added (`make_nemo_config.py --bands 090 150 220`, f220 sources from
+`--mode ptsrc --bands 220` masked too → `nemo/dr5_v2/WebSkyDR5f220`). Completeness at 2.2–3.4e14
+(97% purity): nemo 2-band 0.268, nemo 3-band 0.289, ClusterNet 2-band 0.296, **ClusterNet 3-band
+0.362** (±0.017). So without f220 ClusterNet ≈ matched filter; **its low-mass edge is f220, which
+the linear matched filter can't exploit.**
+
 nemo notes: run as `cd <dir> && mpiexec -n N ~/venvs/nemo/bin/nemo <cfg>.yml -M`
 (`/usr/lib64/openmpi/bin/mpiexec`, niced; DR5 run ~45 min on 12 ranks). It crashes *after* writing
 the catalogue (`KeyError: selFnOptions`, selection-function step; harmless). Local patch in
@@ -124,8 +132,8 @@ median as unobserved → `maps/observed_v2`, `packed_v6_beam_noise`, `sky_patche
 
 ## Open issues / next steps
 
-0. Where does ClusterNet's extra low-mass completeness come from (f220? template freedom?) —
-   run nemo with f220 and ClusterNet on f090+f150 only. Run both on a contiguous footprint so no
+0. Check the f220 gain survives a different CIB model (WebSky's CIB sets how much f220 helps);
+   look at what the network does with f220 (saliency near dusty sources). Run both on a contiguous footprint so no
    edge trim is needed. Train on random 2–4° crops (blind patches have higher background score
    than 1° tiles). Fresh noise per epoch (one realisation now); score against a mass- or
    S/N-limited catalogue; completeness vs local depth (per-tile depth is in `split_act.npz`).
@@ -167,4 +175,8 @@ median as unobserved → `maps/observed_v2`, `packed_v6_beam_noise`, `sky_patche
   numpy/pixell untouched). DR6-style run failed (noise bug); fixed maps (v2/v6), DR5-style nemo,
   retrained n2 (`clusternet-n2v6-obs`, 20 epochs, ~45 min). Report §4.2 and §5.4. Report rebuild now
   also takes `"n2 retrained (fixed maps)"=$M/clusternet-n2v6-obs` in `--runs` and
-  `--png nemo=reports/eval/sky_v6/dr5area_erode12/act_comparison.png`.
+  `--png nemo=reports/eval/sky_v6/dr5area_erode12/act_comparison.png`
+  (later also `"n2, f090+f150 only"=$M/clusternet-n2v6-2ch` and
+  `bands=reports/eval/sky_v6/bands_erode12/act_comparison.png`).
+- 2026-11-20: band test (2-channel ClusterNet, 3-band nemo); scoring wait-loops must not `pgrep -f`
+  a string that appears in their own command line (they match themselves and never exit).
