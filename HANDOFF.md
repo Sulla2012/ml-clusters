@@ -2,7 +2,7 @@
 
 Living status document for whoever picks this up next (human or Claude). Update it as you go.
 
-_Last updated: 2026-11-19 (branch `refactor-centernet`)._
+_Last updated: 2026-11-20 (branch `refactor-centernet`)._
 
 ## Where things are
 
@@ -17,8 +17,14 @@ _Last updated: 2026-11-19 (branch `refactor-centernet`)._
 | corrected WebSky f150 map (CIB from cib_153) | `/mnt/welch/USERS/jorlo/ml-clusters/maps/websky_f150_map_cibfix.fits` |
 | tiles re-cut from corrected maps, same centres, 121×121 (**use this**) | `/mnt/welch/USERS/jorlo/ml-clusters/websky_tiles/packed_v3_cibfix/` |
 | ACT DR6 noise shapes (measured) | `/mnt/welch/USERS/jorlo/ml-clusters/maps/act_noise_f{090,150,220}.json` (+ `.npz` spectra) |
-| "observed" maps: DR6 beam, beam + DR6 noise, noise only, DR6 ivar on WebSky pixels | `/mnt/welch/USERS/jorlo/ml-clusters/maps/observed/` |
+| "observed" maps: DR6 beam, beam + DR6 noise, noise only, DR6 ivar on WebSky pixels — **v1, noise explodes to 1e19 uK at DR6 ivar edges, don't use for new work** | `/mnt/welch/USERS/jorlo/ml-clusters/maps/observed/` |
 | tiles from those maps (same centres as `packed_v3_cibfix`) | `websky_tiles/packed_v5_beam/`, `websky_tiles/packed_v5_beam_noise/` |
+| **observed maps v2** (ivar < 1% of median → unobserved; noise ≤ 1.7e3 / 3.3e3 / 1.7e4 uK) (**use this**) | `/mnt/welch/USERS/jorlo/ml-clusters/maps/observed_v2/` |
+| tiles from v2 maps (same centres) + own `split_act.npz` (**use this**) | `websky_tiles/packed_v6_beam_noise/` (built by `scripts/run_v6_data.sh`) |
+| blind 4° sky patches over the test footprint (+ `footprint_hpx4096.npy`) | `websky_tiles/sky_patches_4deg_v6/` (v1 maps: `sky_patches_4deg_beam_noise/`) |
+| nemo (matched filter) install, separate venv | `~/dev/nemo` (clone of simonsobs/nemo, one local patch in `nemo/pipelines.py`, see below), `~/venvs/nemo` |
+| nemo runs: DR5-style search on v2 maps (**use this**), f150 source catalogue, configs | `/mnt/welch/USERS/jorlo/ml-clusters/nemo/dr5_v2/` (`WebSkyDR5/`, `WebSkyPS150/`) |
+| nemo DR6-style run on v1 maps (broken by the noise bug; kept for the record) | `/mnt/welch/USERS/jorlo/ml-clusters/nemo/WebSkyACTTest/` |
 | ACT-footprint split (in v3_cibfix, v5_beam, v5_beam_noise) | `split_act.npz` (`split`, per-tile `depth` [uK arcmin]) |
 | models | `/mnt/welch/USERS/jorlo/ml-clusters/models/clusternet-*/` (`best.pt`, `log.jsonl`, `config.json`) |
 | legacy Faster R-CNN | `/mnt/welch/USERS/jorlo/ml-clusters/models/torch-websky/` |
@@ -82,13 +88,49 @@ n2 at purity 0.97 (any matched M200m > 1e14 halo counts as real; t = 0.58, 0.034
 Roughly on par with the matched filter, but our maps are easier (DR6 depth, f220, idealised noise,
 no masks) and the mass scales differ (UPP vs true). Fair benchmark still to do: nemo on these sims.
 
+## Blind search vs nemo (done 2026-11-20)
+
+Report §4.2. Both methods search the same sky blindly: ClusterNet on 4° patches
+(`make_sky_patches.py` → `eval_sky.py --model`), nemo with the **ACT DR5 setup**
+(`make_nemo_config.py --mode dr5`: 98+150 GHz, 16 UPP filters, one pass, S/N > 4, sources > 10 mJy
+from an f150 nemo search (`--mode ptsrc`) masked and filled, depth cut at 10% of median). Scored by
+`eval_sky.py --nemo/--rescore --footprint <nemo area> --erode_arcmin 12` (1,535 deg²; nemo makes
+spurious detections along our ragged test-tile-union boundary, gone after a 12′ trim), then
+`compare_act.py` → `reports/eval/sky_v6/dr5area_erode12/`.
+
+| | 97% purity: M90 [1e14] | ACT SNR>5 false rate: M90 [1e14] |
+|---|---|---|
+| nemo, DR5 setup | 3.79 ± 0.09 (S/N 4.8) | 4.03 ± 0.12 (S/N 5.2) |
+| n2 retrained on v6 (`clusternet-n2v6-obs`) | 3.80 ± 0.10 (t 0.68) | 3.84 ± 0.13 (t 0.73) |
+| n2 (v5 maps) | 3.76 (t 0.71) | 3.87 (t 0.78) |
+
+**ClusterNet ties the matched filter at the 90% point and nemo reproduces ACT DR5 (3.8e14).**
+ClusterNet is more complete below 3.5e14 (0.47 vs 0.34 at 2.9e14). Retraining on fixed maps:
+no change (test F1 0.489 vs 0.488 on v6 tiles). **Use `clusternet-n2v6-obs`.**
+
+nemo notes: run as `cd <dir> && mpiexec -n N ~/venvs/nemo/bin/nemo <cfg>.yml -M`
+(`/usr/lib64/openmpi/bin/mpiexec`, niced; DR5 run ~45 min on 12 ranks). It crashes *after* writing
+the catalogue (`KeyError: selFnOptions`, selection-function step; harmless). Local patch in
+`~/dev/nemo/nemo/pipelines.py` (`addSiphonedFromSets`: skip empty catalogues before `vstack`,
+newer astropy refuses to stack their float `name` column) — only needed for the DR6 multi-pass
+config; could be upstreamed. The DR6-style run on v1 maps (`nemo/WebSkyACTTest`) is broken by the
+noise bug below; don't use it.
+
+**Noise bug (fixed):** v1 observed maps had white noise 1/sqrt(ivar) with DR6 edge ivar down to
+5e-38 → noise up to 1e19 uK in 6,735 tiles (~1% of ACT-split tiles) and 26/241 patches, which
+broke nemo's filters. `make_observed_maps.py --ivar_floor 0.01` (default) treats ivar < 1% of
+median as unobserved → `maps/observed_v2`, `packed_v6_beam_noise`, `sky_patches_4deg_v6`
+(`scripts/run_v6_data.sh`).
+
 ## Open issues / next steps
 
-0. Run nemo (matched filter) on `maps/observed/` for a like-for-like baseline; consider raising the
-   training positive cut / scoring vs a mass-limited catalogue (F1 vs every 2e14 M200m halo is unfair).
-   Noise follow-ups: fresh noise per epoch (only one realisation now, model may memorise it);
-   score against a mass- or S/N-limited catalogue; completeness vs local depth (per-tile depth is in
-   `split_act.npz`).
+0. Where does ClusterNet's extra low-mass completeness come from (f220? template freedom?) —
+   run nemo with f220 and ClusterNet on f090+f150 only. Run both on a contiguous footprint so no
+   edge trim is needed. Train on random 2–4° crops (blind patches have higher background score
+   than 1° tiles). Fresh noise per epoch (one realisation now); score against a mass- or
+   S/N-limited catalogue; completeness vs local depth (per-tile depth is in `split_act.npz`).
+   Compare with the existing nemo-on-WebSky catalogues in `/mnt/welch/USERS/cwhitaker/maps/websky/`
+   (`NemoWebSky_..._ACT-DR5-2Pass_2degTiles_optimalCatalog.fits`).
 
 1. ~~Regenerate the WebSky f150 map~~ Done 2026-11-17: the original (cwhitaker's dir, left untouched)
    used the 90 GHz CIB map. The new map differs from it by exactly 2594.7·(cib_153 − cib_90.2)
@@ -121,3 +163,8 @@ no masks) and the mass scales differ (UPP vs true). Fair benchmark still to do: 
   --mass_eval reports/eval/v4 --noise_dir $W/maps --noise_evals reports/eval/noise
   --obs_tiles clean=$T/packed_v3_cibfix beam=$T/packed_v5_beam "beam + noise"=$T/packed_v5_beam_noise`
   (W=/mnt/welch/USERS/jorlo/ml-clusters, T=$W/websky_tiles, M=$W/models).
+- 2026-11-19/20: nemo installed (`~/dev/nemo`, `~/venvs/nemo` via uv — keeps the shared `~/.local`
+  numpy/pixell untouched). DR6-style run failed (noise bug); fixed maps (v2/v6), DR5-style nemo,
+  retrained n2 (`clusternet-n2v6-obs`, 20 epochs, ~45 min). Report §4.2 and §5.4. Report rebuild now
+  also takes `"n2 retrained (fixed maps)"=$M/clusternet-n2v6-obs` in `--runs` and
+  `--png nemo=reports/eval/sky_v6/dr5area_erode12/act_comparison.png`.

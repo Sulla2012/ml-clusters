@@ -209,6 +209,31 @@ def read_ivar(path: Path, shape: tuple[int, ...], wcs: object) -> enmap.ndmap:
     return out
 
 
+def floor_ivar(ivar: enmap.ndmap, frac: float) -> enmap.ndmap:
+    """
+    Treat pixels much shallower than the median as unobserved (ivar = 0).
+
+    The DR6 ivar maps have edge pixels down to ~1e-38 / uK^2; ``1 / sqrt(ivar)`` noise there
+    reaches 1e19 uK, which no real map contains and which breaks Fourier-space filters.
+
+    Parameters
+    ----------
+    ivar : enmap.ndmap
+        Inverse variance per pixel [1/uK^2].
+    frac : float
+        Pixels with ivar < ``frac`` x the median non-zero ivar are zeroed (0 = keep all).
+
+    Returns
+    -------
+    ivar : enmap.ndmap
+        Copy with shallow pixels zeroed.
+    """
+    out = ivar.copy()
+    if frac > 0:
+        out[out < frac * np.median(ivar[ivar > 0])] = 0
+    return out
+
+
 def depth_map(ivar: enmap.ndmap) -> enmap.ndmap:
     """
     Local white-noise depth.

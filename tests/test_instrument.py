@@ -3,7 +3,14 @@
 import numpy as np
 from pixell import enmap, utils
 
-from mlclusters.instrument import NoiseShape, beam_fwhm_arcmin, depth_map, noise_map, patch_power
+from mlclusters.instrument import (
+    NoiseShape,
+    beam_fwhm_arcmin,
+    depth_map,
+    floor_ivar,
+    noise_map,
+    patch_power,
+)
 
 
 def test_noise_shape_interpolates_and_clamps() -> None:
@@ -44,3 +51,13 @@ def test_patch_power_white_level() -> None:
     m = enmap.enmap(np.random.default_rng(0).standard_normal(shape), wcs)
     ps = patch_power(m, enmap.ones(shape, wcs), np.array([1000.0, 3000.0, 6000.0]))
     assert np.allclose(ps / utils.arcmin**2, 1.0, rtol=0.1)
+
+
+def test_floor_ivar_zeroes_shallow_pixels() -> None:
+    """Pixels below the floor become unobserved and give zero (not huge) noise."""
+    shape, wcs = enmap.geometry(np.array([[-1, -1], [1, 1]]) * utils.degree, res=utils.arcmin)
+    ivar = enmap.full(shape, wcs, 1e-3)
+    ivar[0, :5] = 1e-38
+    out = floor_ivar(ivar, 0.01)
+    assert (out[0, :5] == 0).all() and np.allclose(out[1:], 1e-3) and ivar[0, 0] == 1e-38
+    assert np.abs(noise_map(out, NoiseShape([100.0, 1e4], [1.0, 1.0]), 500, seed=0)).max() < 1e3

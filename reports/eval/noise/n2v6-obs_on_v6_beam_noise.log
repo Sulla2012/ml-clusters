@@ -1,0 +1,13 @@
+val: 5958 tiles, 595800 raw detections
+test: 8076 tiles, 807600 raw detections
+{
+  "threshold_from_val": 0.27,
+  "test": {
+    "threshold": 0.27,
+    "n_det": 7945.0,
+    "purity": 0.5791063561988672,
+    "purity_ext": 0.6669603524229075,
+    "completeness": 0.4236366985998526,
+    "f1": 0.4893191804305711
+  }
+}

@@ -389,3 +389,76 @@ def tile_split(
         labels.append(region_split[hp.ang2pix(nside, ra, dec, lonlat=True)])
     labels = np.stack(labels)
     return np.where(np.all(labels == labels[0], axis=0), labels[0], -1)
+
+
+def footprint_hpx(
+    wcs: TileWCS, shape: tuple[int, int], edge: float, nside: int = 4096, pix_arcmin: float = 0.5
+) -> np.ndarray:
+    """
+    Rasterise the union of tile footprints (minus an edge margin) onto HEALPix.
+
+    Parameters
+    ----------
+    wcs : TileWCS
+        Tiles.
+    shape : tuple[int, int]
+        Tile shape ``(ny, nx)``.
+    edge : float
+        Margin [pix] excluded at each tile edge.
+    nside : int, default=4096
+        HEALPix resolution.
+    pix_arcmin : float, default=0.5
+        Tile pixel size, used to sample at half the HEALPix resolution.
+
+    Returns
+    -------
+    hit : np.ndarray
+        Boolean HEALPix map (RING), True inside the union.
+    """
+    ny, nx = shape
+    hit = np.zeros(hp.nside2npix(nside), bool)
+    step = hp.nside2resol(nside, arcmin=True) / pix_arcmin / 2
+    n = len(wcs)
+    for py in np.arange(edge, ny - 1 - edge, step):
+        for px in np.arange(edge, nx - 1 - edge, step):
+            ra, dec = wcs.pix2world(np.full(n, px), np.full(n, py))
+            hit[hp.ang2pix(nside, ra, dec, lonlat=True)] = True
+    return hit
+
+
+def erode_hpx(pix: np.ndarray, nside: int, arcmin: float, nside_work: int = 2048) -> np.ndarray:
+    """
+    Shrink a HEALPix footprint by removing every pixel within ``arcmin`` of its boundary.
+
+    Boundary pixels (footprint pixels with an outside neighbour) are found at ``nside``; one per
+    ``nside_work`` cell is used as a disc centre, so the removed band is ``arcmin`` to within
+    about one ``nside_work`` pixel (~1.7' at 2048).
+
+    Parameters
+    ----------
+    pix : np.ndarray
+        Sorted RING pixels of the footprint at ``nside``.
+    nside : int
+        Resolution of ``pix``.
+    arcmin : float
+        Erosion radius [arcmin].
+    nside_work : int, default=2048
+        Resolution at which boundary pixels are thinned out (<= ``nside``).
+
+    Returns
+    -------
+    pix : np.ndarray
+        Sorted pixels of the eroded footprint.
+    """
+    import healpy as hp
+
+    full = np.zeros(hp.nside2npix(nside), bool)
+    full[pix] = True
+    nb = hp.get_all_neighbours(nside, pix)
+    edge = pix[((nb >= 0) & ~full[np.maximum(nb, 0)]).any(0)]
+    shift = 2 * int(round(np.log2(nside // nside_work)))
+    _, first = np.unique(hp.ring2nest(nside, edge) >> shift, return_index=True)
+    near = np.zeros(len(full), bool)
+    for v in np.array(hp.pix2vec(nside, edge[first])).T:
+        near[hp.query_disc(nside, v, np.radians(arcmin / 60))] = True
+    return pix[~near[pix]]

@@ -25,10 +25,10 @@
 </head>
 <body>
 <h1>ml-clusters: mass-scaled masks, ClusterNet, and bug audit</h1>
-<p class="sub">Branch <code>refactor-centernet</code> · updated 2026-11-19 · WebSky simulations with ACT DR6 beams and noise, f090/f150/f220</p>
+<p class="sub">Branch <code>refactor-centernet</code> · updated 2026-11-20 · WebSky simulations with ACT DR6 beams and noise, f090/f150/f220</p>
 
 <div class="card">
-<b>Summary.</b> The cluster masks now scale with θ500c and the training targets ignore halos of 1–2×10<sup>14</sup> M☉. The Faster R-CNN has been replaced by ClusterNet, a 2.6M-parameter ConvNeXt U-Net with CenterNet heads, and evaluation uses a leak-free spatial split with sky-level one-to-one matching. On clean WebSky maps with the corrected f150 CIB, ClusterNet reaches test F1 0.874 (P 0.883, C 0.865), or 0.886 with the mass head (§3). Two data bugs were found and fixed: f150/f220 sat 1 px off f090, and the f150 map used the 90 GHz CIB. <b>New (§4):</b> with the ACT DR6 beam and DR6-like noise added, a model trained on clean maps collapses (F1 0.05). Training on beam + noise maps gives F1 0.49, finds ≥98% of clusters above 6×10<sup>14</sup> M☉, and still scores 0.79 on clean maps. <b>Train on observed-like maps.</b>
+<b>Summary.</b> The cluster masks now scale with θ500c and the training targets ignore halos of 1–2×10<sup>14</sup> M☉. The Faster R-CNN has been replaced by ClusterNet, a 2.6M-parameter ConvNeXt U-Net with CenterNet heads, and evaluation uses a leak-free spatial split with sky-level one-to-one matching. On clean WebSky maps with the corrected f150 CIB, ClusterNet reaches test F1 0.874 (P 0.883, C 0.865), or 0.886 with the mass head (§3). Two data bugs were found and fixed: f150/f220 sat 1 px off f090, and the f150 map used the 90 GHz CIB. <b>New (§4):</b> with the ACT DR6 beam and DR6-like noise added, a model trained on clean maps collapses (F1 0.05). Training on beam + noise maps gives F1 0.49, finds ≥98% of clusters above 6×10<sup>14</sup> M☉, and still scores 0.79 on clean maps. <b>Train on observed-like maps.</b> <b>New (§4.2):</b> on 1,535 deg² of blind 4° sky, ClusterNet (n2) <b>ties the nemo matched filter</b> run with the ACT DR5 setup on the same maps: both are 90% complete at true M500c = 3.8×10<sup>14</sup> M☉ (±0.1) at 97% purity, which reproduces the published ACT DR5 limit. Below 3.5×10<sup>14</sup> ClusterNet is more complete (0.47 vs 0.34 at 2.9×10<sup>14</sup>). Getting there exposed a bug in our noise maps: noise up to 10<sup>19</sup> μK at the DR6 footprint edges (§5.4, fixed).
 </div>
 
 <h2>1. Mass-scaled cluster masks</h2>
@@ -126,9 +126,35 @@ The large effect in the old evaluation was the sky-overlapping train/test split 
 <ul>
 <li>ACT's 3.8×10<sup>14</sup> is on the UPP (X-ray-calibrated) mass scale. Their weak-lensing calibration factor of 0.71 suggests true masses are higher, which would put ACT's limit near 5×10<sup>14</sup> in true mass. That would favour us; the paper's exact convention should be checked.</li>
 <li>Our maps are easier than real ACT data in several ways. They use DR6 depth (median 13.5 μK-arcmin at f150, versus &lt; 30 μK-arcmin for DR5) and add f220. The noise is idealised: one fixed realisation, isotropic, uncorrelated between bands. There are no masks, and no foreground or source mismatch between the simulation and the sky.</li>
-<li>The fair benchmark is a matched filter (e.g. the nemo pipeline) run on these same simulated maps.</li>
+<li>The fair benchmark is a matched filter (the nemo pipeline) run on these same simulated maps: done in §4.2.</li>
 </ul>
 <p><b>Caveats.</b> There is one fixed noise realisation per band, so the model may partly memorise it; drawing fresh noise each epoch would fix that. The noise is uncorrelated between bands and isotropic, with no scan-direction stripes. The maps have no map-maker transfer function and no point-source masking.</p>
+
+<h3>4.2 Blind search against a matched filter (nemo, ACT DR5 setup)</h3>
+<p>The 1° tiles are centred on halos, so §4.1 is close to, but not quite, a blind search. Here both methods search the same sky blindly:</p>
+<ul>
+<li><b>ClusterNet</b> runs on 4°×4° TAN patches (481×481 px, 0.5° overlap) tiling the test footprint (<code>scripts/make_sky_patches.py</code>). Detections within 20 px of a patch border are dropped and the rest merged across patches at 2′ (<code>scripts/eval_sky.py --model</code>). The network is fully convolutional; on the same cluster its peak score is identical in 1°, 2° and 4° cutouts.</li>
+<li><b>nemo</b> (<a href="https://github.com/simonsobs/nemo">simonsobs/nemo</a>, Hilton's matched-filter pipeline) runs with the ACT DR5 cluster-search setup (<code>scripts/make_nemo_config.py --mode dr5</code>): 98 + 150 GHz only, 16 Arnaud (UPP) filters (M500c = 1–8×10<sup>14</sup>, z = 0.2–1.2), noise estimated from the map in 10°×5° tiles, S/N from Arnaud_M2e14_z0p4, one pass. As in DR5, point sources above 10 mJy at 150 GHz are masked and filled before filtering. They come from an f150 nemo source search on the same maps (446 sources; holes of 320″ growing to 12′ with flux), and pixels shallower than 10% of the median depth are cut.</li>
+<li><b>Same area for both.</b> Scoring uses nemo's search area (test-tile union minus depth cut and source holes) trimmed by 12′ from its edges: 1,535 deg². The union of 1° tiles has a very ragged edge, and nemo makes spurious detections along survey-mask boundaries. Untrimmed, half its false S/N &gt; 5 detections lie within 4′ of an edge, and none has tSZ signal in the true y map. Purity at S/N &gt; 5 rises from 0.91 (no trim) to 0.96 / 0.98 / 0.984 / 0.986 at 4′ / 8′ / 12′ / 16′, so 12′ removes the edge effect. A contiguous survey mask would avoid it in a real survey.</li>
+</ul>
+<table>
+<tr><th>method</th><th>operating point</th><th>threshold</th><th>purity</th><th>false / deg²</th><th>M<sub>90</sub> (true M500c, 0.3&lt;z&lt;0.7)</th><th>completeness M500c &gt; 3.8e14</th></tr>
+<tr><td>nemo, ACT DR5 setup</td><td>purity ≥ 0.97</td><td>S/N 4.8</td><td>0.971</td><td>0.019</td><td><b>3.79 ± 0.09</b> ×10<sup>14</sup></td><td>0.985</td></tr>
+<tr><td>ClusterNet n2, retrained on fixed maps</td><td>purity ≥ 0.97</td><td>0.68</td><td>0.974</td><td>0.022</td><td><b>3.80 ± 0.10</b> ×10<sup>14</sup></td><td>0.979</td></tr>
+<tr><td>nemo, ACT DR5 setup</td><td>false rate ≤ ACT SNR &gt; 5</td><td>S/N 5.2</td><td>0.992</td><td>0.004</td><td><b>4.03 ± 0.12</b> ×10<sup>14</sup></td><td>0.959</td></tr>
+<tr><td>ClusterNet n2, retrained on fixed maps</td><td>false rate ≤ ACT SNR &gt; 5</td><td>0.73</td><td>0.992</td><td>0.005</td><td><b>3.84 ± 0.13</b> ×10<sup>14</sup></td><td>0.974</td></tr>
+<tr><td>ClusterNet n2, old maps (§4)</td><td>purity ≥ 0.97 / ACT rate</td><td>0.71 / 0.78</td><td>0.973 / 0.993</td><td>0.022 / 0.005</td><td>3.76 / 3.87 ×10<sup>14</sup></td><td>0.985 / 0.974</td></tr>
+<tr><td>ACT DR5 (paper, real data)</td><td>SNR<sub>2.4</sub> &gt; 5</td><td>S/N 5</td><td>~0.97</td><td>0.006</td><td>3.8×10<sup>14</sup> (UPP mass)</td><td>—</td></tr>
+</table>
+<p>± is the bootstrap standard deviation over clusters (4,860 truths at 0.3 &lt; z &lt; 0.7, 410 above 3×10<sup>14</sup>).</p>
+{{fig:nemo}}
+<ul>
+<li><b>nemo reproduces ACT DR5.</b> At S/N ≈ 5 it is 90% complete at 3.8–4.0×10<sup>14</sup> with a false rate close to the paper's, which validates the simulation, the setup and the scoring.</li>
+<li><b>ClusterNet ties nemo at the 90% point.</b> M<sub>90</sub> agrees to within one bootstrap σ at both operating points, and the M<sub>90</sub>-versus-false-rate curves overlap from 10<sup>−3</sup> to 1 false detection per deg² (right panel; nemo's catalogue stops near 0.3 deg<sup>−2</sup> at its S/N 4 cut).</li>
+<li><b>ClusterNet is more complete below 3.5×10<sup>14</sup>.</b> At the same purity it finds 47% vs 34% of clusters at 2.9×10<sup>14</sup> and 25% vs 15% at 2.4×10<sup>14</sup> (left panel). It uses f220 and is not tied to a fixed set of UPP templates; we have not separated these effects.</li>
+<li><b>Retraining on the fixed maps changes nothing measurable</b> (n2 old vs retrained: test F1 0.488 vs 0.489 on the v6 test tiles; M<sub>90</sub> equal within errors). The ~1% of training tiles with exploded noise (§5.4) did no harm.</li>
+</ul>
+<p><b>First attempt and what went wrong.</b> nemo was first run with its ACT DR6 example setup (98/150/220 GHz, two point-source passes, two cluster passes; 9 h on 16 cores). Its catalogue was unusable: 22,700 objects at S/N &gt; 5 and 13% purity. In 40 of 95 tiles the matched filter was ~10<sup>10</sup> too small and y<sub>c</sub> came out at 10<sup>3</sup>–10<sup>9</sup>. The cause was the noise bug of §5.4: tiles whose 1° overlap reached the exploded pixels produced point sources of up to 10<sup>12</sup> Jy, and subtracting those wrecked the filters of the tile and its neighbours. On the 56 unaffected tiles that run gave the same conclusion as above (nemo M<sub>90</sub> 3.76 vs n2 3.86×10<sup>14</sup> at 97% purity).</p>
 
 <h2>5. Data problems found</h2>
 <h3>5.1 Frequency channels misaligned by one pixel</h3>
@@ -151,6 +177,9 @@ swapped (it would be off by ~1.9× in each band). <code>mlclusters.websky</code>
 
 <h3>5.3 Regenerated f150 map</h3>
 <p>The map was rebuilt with <code>scripts/make_websky_map.py 150</code> (5 min, 23 GB RAM) and written to <code>/mnt/welch/USERS/jorlo/ml-clusters/maps/websky_f150_map_cibfix.fits</code>; the original in the shared WebSky directory is untouched. In three 4°×4° test patches the difference new − old equals 2594.7 × (cib_153 − cib_90.2) with a 0.000 μK residual, i.e. the CIB term is the only change, and repeating the template regression on the new map now selects cib_153 (factor 2.58e3). The change is ~22 μK rms per pixel, dominated by bright dusty sources. All 186,784 tiles were re-cut from the corrected maps at the original centres with the fixed <code>make_tiles</code> (TAN projection for every channel, so no realignment is needed) into <code>packed_v3_cibfix</code>; models v3 and v4 below are trained on these.</p>
+
+<h3>5.4 Noise up to 10<sup>19</sup> μK at the DR6 footprint edges</h3>
+<p>The DR6 ivar maps have edge pixels with ivar down to 5×10<sup>−38</sup> μK<sup>−2</sup>. Our noise is white with variance 1/ivar, so the v1 observed maps (<code>maps/observed/</code>) held noise up to 10<sup>19</sup> μK there. Real maps contain nothing like it. It touched 6,735 of 186,784 tiles (698 train, 56 val and 58 test tiles in the ACT split, and 26 of 241 4° patches) and broke every Fourier-space filter whose tile reached it (§4.2). Fix: <code>make_observed_maps.py --ivar_floor 0.01</code> (<code>instrument.floor_ivar</code>) treats pixels with ivar below 1% of the median as unobserved, which removes 2.2% of the observed area. The maximum noise is now 1.7×10<sup>3</sup> / 3.3×10<sup>3</sup> / 1.7×10<sup>4</sup> μK at f090 / f150 / f220. New maps are in <code>maps/observed_v2/</code>, with tiles in <code>packed_v6_beam_noise</code> (8,076 ACT test tiles instead of 8,160) and patches in <code>sky_patches_4deg_v6</code>; build with <code>scripts/run_v6_data.sh</code>. The §4 noise table was made on the v1 maps; n2 scores the same on v6 (F1 0.488).</p>
 
 <h2>6. Bug audit (pre-refactor code)</h2>
 <p>Severity: <span class="sev-h">high</span> = changes results; <span class="sev-m">medium</span> = wrong in some cases or crashes a code path; <span class="sev-l">low</span> = latent or cosmetic.
@@ -183,6 +212,8 @@ All are fixed in the refactor or by the new pipeline unless noted.</p>
 <ul>
 <li>§1–3 numbers are for clean maps and are far above what is achievable on ACT data; §4 is the realistic setting.</li>
 <li>Draw fresh noise realisations on the fly each epoch, and add noise correlated between bands, scan-direction anisotropy, the map-maker transfer function and point-source masking.</li>
+<li>Find out where ClusterNet's extra low-mass completeness comes from (f220, template freedom, or something else): run nemo with f220 and ClusterNet without it.</li>
+<li>Run both methods on a contiguous footprint (e.g. the whole ACT area, scoring held-out regions) so no edge trim is needed.</li>
 <li>Evaluate against a mass- or S/N-limited catalogue, and report completeness against local depth (per-tile depths are in <code>split_act.npz</code>).</li>
 <li>Natural extensions: a log M500c regression head, a mass/SNR-dependent positive cut, and inference on large maps rather than per-cluster tiles.</li>
 </ul>

@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import healpy as hp
 import numpy as np
 import torch
 
+from .catalogs import Catalog
 from .data import PackedTiles
 from .geometry import dedupe, match_catalogs, one_to_one_match
 from .masks import MaskConfig
@@ -323,3 +325,117 @@ def score_catalog(
     ext = truth_in_footprint(tiles, idx, cfg.m_ignore, edge)
     near, _ = match_catalogs(dets.ra, dets.dec, ext["ra"], ext["dec"], match_arcmin)
     return CatalogScores(dets, match, (match >= 0) | (near >= 0), truth, truth_score)
+
+
+def in_hpx(ra: np.ndarray, dec: np.ndarray, footprint: np.ndarray, nside: int) -> np.ndarray:
+    """
+    Whether positions fall in a HEALPix footprint.
+
+    Parameters
+    ----------
+    ra, dec : np.ndarray
+        Positions [deg].
+    footprint : np.ndarray
+        Sorted RING pixel indices of the footprint.
+    nside : int
+        HEALPix resolution of ``footprint``.
+
+    Returns
+    -------
+    inside : np.ndarray
+        Boolean per position.
+    """
+    pix = hp.ang2pix(nside, ra, dec, lonlat=True)
+    j = np.clip(np.searchsorted(footprint, pix), 0, len(footprint) - 1)
+    return footprint[j] == pix
+
+
+def score_sky(
+    ra: np.ndarray,
+    dec: np.ndarray,
+    score: np.ndarray,
+    cat: Catalog,
+    footprint: np.ndarray,
+    nside: int,
+    cfg: MaskConfig,
+    match_arcmin: float = 2.0,
+) -> dict[str, np.ndarray]:
+    """
+    Score a blind sky catalogue inside a footprint (any detector: network or matched filter).
+
+    Detections and truths are both restricted to the footprint. Truths are catalogue halos with
+    M200m >= ``cfg.m_cut``; a detection is "real" if it lies within ``match_arcmin`` of any halo
+    with M200m >= ``cfg.m_ignore`` (inside the footprint or not).
+
+    Parameters
+    ----------
+    ra, dec, score : np.ndarray
+        De-duplicated detections [deg] and their scores.
+    cat : Catalog
+        Halo catalogue.
+    footprint : np.ndarray
+        Sorted HEALPix RING pixels of the searched area.
+    nside : int
+        Resolution of ``footprint``.
+    cfg : MaskConfig
+        Mass cuts.
+    match_arcmin : float, default=2.0
+        Matching radius.
+
+    Returns
+    -------
+    res : dict[str, np.ndarray]
+        ``det_ra``, ``det_dec``, ``det_score``, ``det_match`` (truth index or -1), ``det_real``,
+        ``truth_*`` columns (``cat_idx``, ``ra``, ``dec``, ``m200m``, ``m500c``, ``z``,
+        ``theta500c``, ``inner`` = all True) and ``truth_score`` (0 if missed).
+    """
+    keep = in_hpx(ra, dec, footprint, nside)
+    ra, dec, score = ra[keep], dec[keep], score[keep]
+    ext = np.where(cat.m200m >= cfg.m_ignore)[0]
+    t = ext[(cat.m200m[ext] >= cfg.m_cut) & in_hpx(cat.ra[ext], cat.dec[ext], footprint, nside)]
+    match = one_to_one_match(ra, dec, score, cat.ra[t], cat.dec[t], match_arcmin)
+    t_score = np.zeros(len(t))
+    t_score[match[match >= 0]] = score[match >= 0]
+    near, _ = match_catalogs(ra, dec, cat.ra[ext], cat.dec[ext], match_arcmin)
+    truth = {k: getattr(cat, k)[t] for k in ("ra", "dec", "m200m", "m500c", "z", "theta500c")}
+    return {
+        "det_ra": ra,
+        "det_dec": dec,
+        "det_score": score,
+        "det_match": match,
+        "det_real": (match >= 0) | (near >= 0),
+        "truth_score": t_score,
+        "truth_cat_idx": t,
+        "truth_inner": np.ones(len(t), bool),
+        **{f"truth_{k}": v for k, v in truth.items()},
+    }
+
+
+def sky_curves(res: dict[str, np.ndarray], thresholds: np.ndarray) -> dict[str, list[float]]:
+    """
+    Purity, completeness and F1 versus threshold for :func:`score_sky` output.
+
+    Parameters
+    ----------
+    res : dict[str, np.ndarray]
+        Output of :func:`score_sky`.
+    thresholds : np.ndarray
+        Score thresholds.
+
+    Returns
+    -------
+    curves : dict[str, list[float]]
+        ``threshold``, ``n_det``, ``purity``, ``purity_ext``, ``completeness``, ``f1``.
+    """
+    s, m, r, ts = res["det_score"], res["det_match"] >= 0, res["det_real"], res["truth_score"]
+    out: dict[str, list[float]] = {
+        k: [] for k in ("threshold", "n_det", "purity", "purity_ext", "completeness", "f1")
+    }
+    for t in thresholds:
+        sel = s >= t
+        n = max(int(sel.sum()), 1)
+        p, c = (sel & m).sum() / n, (ts >= t).mean()
+        vals = (t, sel.sum(), p, (sel & r).sum() / n, c, 2 * p * c / max(p + c, 1e-9))
+        for k, v in zip(out, vals, strict=True):
+            out[k].append(float(v))
+    return out

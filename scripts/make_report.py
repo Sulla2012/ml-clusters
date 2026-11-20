@@ -20,7 +20,7 @@ from mlclusters.masks import MaskConfig, make_mask, radius_pix, tile_training_ma
 from mlclusters.model import decode  # noqa: E402
 from mlclusters.training import load_checkpoint  # noqa: E402
 
-COLORS = ["#1f6feb", "#d1495b", "#2a9d8f", "#e9a03b", "#7b5ea7"]
+COLORS = ["#1f6feb", "#d1495b", "#2a9d8f", "#e9a03b", "#7b5ea7", "#6b7280", "#c2410c", "#0e7490"]
 
 
 def _embed(fig: plt.Figure, out_dir: Path, name: str) -> str:
@@ -633,6 +633,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--noise_evals", type=Path, help="Directory of the noise-experiment evals.")
     p.add_argument("--obs_tiles", nargs="*", default=[], help="label=packed_dir per map version.")
     p.add_argument("--act_png", type=Path, help="Figure from compare_act.py.")
+    p.add_argument("--png", nargs="*", default=[], help="key=path: embed path at {{fig:key}}.")
     p.add_argument("--template", type=Path, default=Path("reports/template.html"))
     p.add_argument("--out", type=Path, default=Path("reports/report.html"))
     p.add_argument("--debug", action="store_true", help="Only make the cheap figures.")
@@ -682,6 +683,8 @@ def main() -> None:
         )
     if args.act_png:
         parts["fig:act"] = lambda: embed_png(args.act_png)
+    for key, path in _pairs(args.png).items():
+        parts[f"fig:{key}"] = lambda path=path: embed_png(path)
     if args.noise_dir:
         parts["fig:noise"] = lambda: _embed(fig_noise(args.noise_dir), fig_dir, "noise")
     if args.obs_tiles:

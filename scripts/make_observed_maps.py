@@ -8,7 +8,9 @@ For each band this writes, next to each other in ``out_dir``:
 - ``act_dr6_f{band}_ivar.fits``       DR6 temperature ivar on the WebSky pixelisation
 
 The noise is white with the local DR6 ivar plus an atmospheric component whose shape comes from
-``fit_act_noise.py`` (``act_noise_f{band}.json`` in ``--noise_dir``).
+``fit_act_noise.py`` (``act_noise_f{band}.json`` in ``--noise_dir``). Pixels with ivar below
+``--ivar_floor`` x the median are treated as unobserved (maps before ``observed_v2`` had no floor
+and contain noise up to 1e19 uK at the DR6 footprint edges).
 """
 
 import argparse as argp
@@ -22,6 +24,7 @@ from mlclusters.instrument import (
     act_files,
     beam_fwhm_arcmin,
     convolve_beam,
+    floor_ivar,
     load_beam,
     noise_map,
     read_ivar,
@@ -35,7 +38,9 @@ CLEAN = {
 }
 
 
-def make_band(band: str, out_dir: Path, noise_dir: Path, seed: int, debug: bool) -> None:
+def make_band(
+    band: str, out_dir: Path, noise_dir: Path, seed: int, ivar_floor: float, debug: bool
+) -> None:
     """
     Make and write the beam, noise, beam+noise and ivar maps for one band.
 
@@ -49,12 +54,14 @@ def make_band(band: str, out_dir: Path, noise_dir: Path, seed: int, debug: bool)
         Directory with ``act_noise_f{band}.json``.
     seed : int
         Noise seed (offset per band).
+    ivar_floor : float
+        Ivar below this fraction of the median is set to 0 (unobserved).
     debug : bool
         Work at 4 arcmin resolution.
     """
     clean = enmap.read_map(str(CLEAN[band]))
     lmax = 21600
-    ivar = read_ivar(act_files(band, "ivar"), clean.shape, clean.wcs)
+    ivar = floor_ivar(read_ivar(act_files(band, "ivar"), clean.shape, clean.wcs), ivar_floor)
     if debug:
         clean, ivar, lmax = enmap.downgrade(clean, 8), enmap.downgrade(ivar, 8, op=np.sum), 2700
     bl = load_beam(act_files(band, "beam"), lmax)
@@ -91,6 +98,7 @@ def _make_parser() -> argp.ArgumentParser:
     p.add_argument("--bands", nargs="+", default=["090", "150", "220"])
     p.add_argument("--noise_dir", type=Path, default=D, help="Where act_noise_f*.json live.")
     p.add_argument("--seed", type=int, default=1234)
+    p.add_argument("--ivar_floor", type=float, default=0.01, help="Fraction of median ivar.")
     p.add_argument("--debug", action="store_true", help="4 arcmin pixels, lmax 2700.")
     return p
 
@@ -100,7 +108,7 @@ def main() -> None:
     args = _make_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     for band in args.bands:
-        make_band(band, args.out_dir, args.noise_dir, args.seed, args.debug)
+        make_band(band, args.out_dir, args.noise_dir, args.seed, args.ivar_floor, args.debug)
 
 
 if __name__ == "__main__":

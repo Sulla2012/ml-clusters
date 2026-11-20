@@ -5,7 +5,14 @@ import pytest
 from astropy import wcs
 from astropy.io import fits
 
-from mlclusters.geometry import TileWCS, dedupe, healpix_split, match_catalogs, one_to_one_match
+from mlclusters.geometry import (
+    TileWCS,
+    dedupe,
+    erode_hpx,
+    healpix_split,
+    match_catalogs,
+    one_to_one_match,
+)
 from mlclusters.halos import convert_mass, mask_radius, radius_from_mass, theta_delta
 
 
@@ -110,3 +117,16 @@ def test_healpix_split_fractions():
     split, regions = healpix_split(np.zeros(1), np.zeros(1), (0.8, 0.1, 0.1), nside=4)
     counts = np.bincount(regions, minlength=3) / len(regions)
     assert np.allclose(counts, [0.8, 0.1, 0.1], atol=0.01)
+
+
+def test_erode_hpx_shrinks_disc() -> None:
+    """Eroding a 1 deg disc by 10' leaves roughly a 50' disc, all inside the original."""
+    import healpy as hp
+
+    nside = 2048
+    v = hp.ang2vec(30.0, -20.0, lonlat=True)
+    pix = np.sort(hp.query_disc(nside, v, np.radians(1.0)))
+    out = erode_hpx(pix, nside, 10.0, nside_work=1024)
+    assert np.isin(out, pix).all()
+    r_eff = np.degrees(np.sqrt(len(out) * hp.nside2pixarea(nside) / np.pi)) * 60
+    assert 48 < r_eff < 51.5

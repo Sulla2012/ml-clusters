@@ -6,8 +6,8 @@ sims; 2471 at SNR > 4). This script measures, for each evaluation and score thre
 
 - ``M90``: the true M500c at which completeness first reaches 90%, for 0.3 < z < 0.7;
 - the density of detections not matched to any M200m > 1e14 halo [per deg^2] over the union
-  of the (strict-footprint) test tiles, which transfers to a blind survey, unlike purity on
-  cluster-centred tiles;
+  of the (strict-footprint) test tiles, or the ``area_deg2`` in the eval's JSON if present
+  (this transfers to a blind survey, unlike purity on cluster-centred tiles);
 - purity counting any matched M200m > 1e14 halo as real.
 
 Writes a JSON summary and a figure (completeness vs M500c at the chosen operating points).
@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from mlclusters.catalogs import Catalog  # noqa: E402
 from mlclusters.data import PackedTiles  # noqa: E402
+from mlclusters.geometry import footprint_hpx  # noqa: E402
 
 ACT_M90 = 3.8e14  # Hilton+21, M500c^UPP, z = 0.5, SNR2.4 > 5
 ACT_AREA = 13211.0  # deg^2
@@ -53,14 +54,7 @@ def footprint_area(tiles: PackedTiles, idx: np.ndarray, edge: float, nside: int 
     area : float
         Area [deg^2].
     """
-    ny, nx = tiles.shape
-    wcs = tiles.wcs[idx]
-    hit = np.zeros(hp.nside2npix(nside), bool)
-    step = hp.nside2resol(nside, arcmin=True) / tiles.pix_arcmin / 2
-    for py in np.arange(edge, ny - 1 - edge, step):
-        for px in np.arange(edge, nx - 1 - edge, step):
-            ra, dec = wcs.pix2world(np.full(len(idx), px), np.full(len(idx), py))
-            hit[hp.ang2pix(nside, ra, dec, lonlat=True)] = True
+    hit = footprint_hpx(tiles.wcs[idx], tiles.shape, edge, nside, tiles.pix_arcmin)
     return float(hit.sum() * hp.nside2pixarea(nside, degrees=True))
 
 
@@ -121,7 +115,8 @@ def operating_points(d: dict, m500c: np.ndarray, zsel: np.ndarray, area: float) 
     """
     inner = d["truth_inner"]
     rows = []
-    for t in np.round(np.linspace(0.05, 0.99, 95), 2):
+    grid = np.linspace(0.05, 0.99, 95) if d["det_score"].max() <= 1 else np.arange(3.5, 15, 0.1)
+    for t in np.round(grid, 2):
         sel = d["det_score"] >= t
         n_false = int((sel & ~d["det_real"]).sum())
         det = d["truth_score"][inner] >= t
@@ -167,7 +162,7 @@ def main() -> None:
     print(f"test area (union of tiles): {area:.0f} deg^2", flush=True)
     cat = Catalog.load(args.catalog)
     out = {"area_deg2": area, "act_false_per_deg2": ACT_FALSE, "act_m90": ACT_M90, "models": {}}
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
     for item in args.evals:
         label, pre = item.split("=", 1)
         d = dict(np.load(Path(pre).with_suffix(".npz")))
@@ -175,7 +170,9 @@ def main() -> None:
         m500c = cat.m500c[d["truth_cat_idx"][inner]]
         z = d["truth_z"][inner]
         zsel = (z > 0.3) & (z < 0.7)
-        rows = operating_points(d, m500c, zsel, area)
+        js = Path(pre).with_suffix(".json")
+        a = json.loads(js.read_text()).get("area_deg2", area) if js.exists() else area
+        rows = operating_points(d, m500c, zsel, a)
         out["models"][label] = rows
         best = next((r for r in rows if r["purity_ext"] >= 0.97), rows[-1])
         strict = next((r for r in rows if r["false_per_deg2"] <= ACT_FALSE["SNR>5"]), rows[-1])
@@ -192,6 +189,9 @@ def main() -> None:
         n = np.bincount(i_m[ok], minlength=len(M_EDGES) - 1)
         c = np.bincount(i_m[ok], det[zsel][ok], len(M_EDGES) - 1) / np.maximum(n, 1)
         cen = np.sqrt(M_EDGES[1:] * M_EDGES[:-1])
+        fr = np.array([r["false_per_deg2"] for r in rows])
+        mm = np.array([r["m90_z0.3-0.7"] for r in rows])
+        ax2.plot(fr[fr > 0], mm[fr > 0], "-", label=label)
         ax.plot(
             cen[n > 10],
             c[n > 10],
@@ -209,6 +209,18 @@ def main() -> None:
         title="at the lowest threshold with purity ≥ 0.97",
     )
     ax.legend(fontsize=7)
+    for k, v in ACT_FALSE.items():
+        ax2.axvline(v, color="0.6", ls=":", lw=0.8)
+        ax2.text(v, 1.0, f" ACT {k}", transform=ax2.get_xaxis_transform(), fontsize=7, va="top")
+    ax2.axhline(ACT_M90, color="k", ls="--", lw=0.8, label="ACT DR5 M90")
+    ax2.set(
+        xscale="log",
+        yscale="log",
+        xlabel="false detections per deg^2",
+        ylabel="M90 [M500c, Msun], 0.3 < z < 0.7",
+        title="threshold sweep",
+    )
+    ax2.legend(fontsize=7)
     fig.tight_layout()
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out.with_suffix(".png"), dpi=110)
